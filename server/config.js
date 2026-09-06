@@ -4,7 +4,7 @@ module.exports = {
 
     // Client
     main_menu: 'index.html', // Where the main menu is located (in the /public folder).
-    host: '192.168.50.117:3000', // Game server domain. If the host is 'localhost:NUMBER', the NUMBER must be the port setting.
+    host: process.env.RENDER_EXTERNAL_HOSTNAME ? process.env.RENDER_EXTERNAL_HOSTNAME : '192.168.50.117:3000', // Game server domain. If the host is 'localhost:NUMBER', the NUMBER must be the port setting.
     port: Number(process.env.PORT) || 3000, // Which port to run the web server on.
 
     // Server
@@ -542,6 +542,7 @@ module.exports = {
     round_arena: false,
     mode: 'ffa',
 }
+
 
 
 
