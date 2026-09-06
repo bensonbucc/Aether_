@@ -15,7 +15,8 @@ Error.stackTraceLimit = Infinity;
 
 // Load environment variables from .env using a custom dotenv loader
 const dotenv = require("./lib/dotenv.js");
-const envContent = fs.readFileSync(path.join(__dirname, "./.env")).toString();
+const envPath = path.join(__dirname, "./.env");
+const envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath).toString() : "";
 const environment = dotenv(envContent);
 
 // Set each environment variable in process.env
@@ -367,4 +368,6 @@ let bunLoop = setInterval(() => {
 
 // Log that the web server has been initialized if logging is enabled
 if (Config.startup_logs) console.log("Web Server initialized.");
+
+
 
