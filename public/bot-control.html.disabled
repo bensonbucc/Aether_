@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Bot Control</title>
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+    pointer-events: none;
+}
+
+#panel {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    width: 280px;
+    background: #333;
+    color: white;
+    border: 2px solid #777;
+    border-radius: 10px;
+    padding: 12px;
+    box-sizing: border-box;
+    pointer-events: auto;
+    box-shadow: 0 5px 20px #000;
+}
+
+#title {
+    cursor: grab;
+    user-select: none;
+    background: #444;
+    padding: 8px;
+    border-radius: 6px;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+#title:active {
+    cursor: grabbing;
+}
+
+button, select, input {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 5px 0;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid #777;
+}
+
+button {
+    cursor: pointer;
+    background: #555;
+    color: white;
+}
+
+button:hover {
+    background: #666;
+}
+
+#status {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #aaa;
+}
+</style>
+</head>
+
+<body>
+
+<div id="panel">
+
+    <div id="title">🤖 Bot Control</div>
+
+    <label>Number of bots</label>
+    <input id="amount" type="number" min="1" max="150" value="5">
+
+    <label>Bot type</label>
+    <select id="type">
+        <option value="fighter">Fighter</option>
+        <option value="feeder">Feeder</option>
+    </select>
+
+    <label>Tank</label><select id="tank"><option value="basic">Basic</option><option value="twin">Twin</option><option value="sniper">Sniper</option><option value="machineGun">Machine Gun</option><option value="flankGuard">Flank Guard</option><option value="fighter">Fighter</option><option value="destroyer">Destroyer</option><option value="assassin">Assassin</option></select><label>Team</label><select id="team"><option value="-1">Blue</option><option value="-2">Green</option></select>
+
+    <button onclick="spawnBots()">Spawn Bots</button>
+    <button onclick="removeBots()">Remove All Bots</button>
+
+    <hr>
+
+    <label>Movement</label>
+
+<div id="position-controls">
+    <button onclick="setMode('mouse')">?? Follow Mouse</button>
+
+    <div>
+        <button onclick="setMode('top-left')">? Top Left</button>
+        <button onclick="setMode('top-center')">? Top Center</button>
+        <button onclick="setMode('top-right')">? Top Right</button>
+    </div>
+
+    <div>
+        <button onclick="setMode('middle-left')">? Middle Left</button>
+        <button onclick="setMode('center')">? Center</button>
+        <button onclick="setMode('middle-right')">? Middle Right</button>
+    </div>
+
+    <div>
+        <button onclick="setMode('bottom-left')">? Bottom Left</button>
+        <button onclick="setMode('bottom-center')">? Bottom Center</button>
+        <button onclick="setMode('bottom-right')">? Bottom Right</button>
+    </div>
+</div>
+
+<div id="status">Status: Ready</div>
+
+</div>
+
+<script>
+
+let currentMode = "mouse";
+
+function sendToGame(data) {
+    window.parent.postMessage({
+        type: "bot-control",
+        ...data
+    }, "*");
+}
+
+function spawnBots() {
+    let amount = Number(document.getElementById("amount").value);
+
+    // Keep the amount between 1 and 150.
+    amount = Math.max(1, Math.min(150, amount));
+
+    document.getElementById("amount").value = amount;
+
+    let botType = document.getElementById("type").value;
+    let tank = document.getElementById('tank').value;
+    let team = Number(document.getElementById('team').value);
+
+    sendToGame({
+        action: "spawn",
+        amount: amount,
+        botType: botType,
+        tank: tank,
+        team: team,
+        mode: currentMode
+    });
+
+    document.getElementById("status").textContent =
+        "Spawn requested: " + amount + " " + botType + " bots";
+}
+
+function removeBots() {
+    sendToGame({
+        action: "removeAll"
+    });
+
+    document.getElementById("status").textContent =
+        "Remove requested";
+}
+
+let mouseFollowActive = false;
+
+window.addEventListener("mousemove", function(e) {
+    if (!mouseFollowActive) return;
+
+    const gameCanvas = window.parent.document.querySelector("canvas");
+    if (!gameCanvas) return;
+
+    const rect = gameCanvas.getBoundingClientRect();
+
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    sendToGame({
+        action: "mouse",
+        x: x,
+        y: y
+    });
+});
+function setMode(mode) {
+    currentMode = mode;
+    mouseFollowActive = mode === "mouse";
+
+    sendToGame({
+        action: "mode",
+        mode: mode
+    });
+
+    document.getElementById("status").textContent =
+        "Movement: " + mode;
+}
+
+
+// -------------------------
+// MOVE THE PANEL
+// -------------------------
+
+const panel = document.getElementById("panel");
+const title = document.getElementById("title");
+
+let dragging = false;
+let offsetX = 0;
+let offsetY = 0;
+
+title.addEventListener("pointerdown", function(e) {
+    dragging = true;
+
+    offsetX = e.clientX - panel.offsetLeft;
+    offsetY = e.clientY - panel.offsetTop;
+
+    title.setPointerCapture(e.pointerId);
+
+    e.preventDefault();
+    e.stopPropagation();
+});
+
+title.addEventListener("pointermove", function(e) {
+    if (!dragging) return;
+
+    panel.style.left =
+        Math.max(0, e.clientX - offsetX) + "px";
+
+    panel.style.top =
+        Math.max(0, e.clientY - offsetY) + "px";
+
+    e.stopPropagation();
+});
+
+title.addEventListener("pointerup", function(e) {
+    dragging = false;
+
+    try {
+        title.releasePointerCapture(e.pointerId);
+    } catch {}
+
+    e.stopPropagation();
+});
+
+title.addEventListener("pointercancel", function() {
+    dragging = false;
+});
+
+</script>
+
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+

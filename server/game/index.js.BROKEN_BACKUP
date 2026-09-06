@@ -1,0 +1,156 @@
+spawnBots(loc, team) {
+    let botName = Config.bot_name_prefix + ran.chooseBotName();
+    let o = new Entity(loc);
+
+    o.define(Config.spawn_class);
+    o.define({ CONTROLLERS: ["nearestDifferentMaster"] }, false, false, false);
+    o.refreshBodyAttributes();
+
+    o.isBot = true;
+    o.name = botName;
+    o.invuln = true;
+    o.leftoverUpgrades = ran.chooseChance(...Config.bot_class_upgrade_chances);
+
+    let color = Config.random_body_colors
+        ? Math.floor(Math.random() * 20)
+        : team
+            ? getTeamColor(team)
+            : 'red';
+
+    o.color.base = color;
+    o.leaderboardColor = color;
+    o.minimapColor = color;
+
+    o.skill.reset();
+
+    let leveling = setInterval(() => {
+        if (o.skill.level < Config.bot_start_level) {
+            o.skill.score += o.skill.levelScore;
+            o.skill.maintain();
+        } else {
+            clearInterval(leveling);
+        }
+    }, 100);
+
+    o.refreshBodyAttributes();
+
+    if (team) o.team = team;
+
+    this.bots.push(o);
+
+    if (Config.tag) {
+        Config.tag_data.addBot(o);
+        global.nextTagBotTeam = null;
+    }
+
+    setTimeout(() => {
+        let CC = Class[o.defs[0]];
+        if (!CC) CC = {};
+
+        // Clear whatever controller was assigned during spawning.
+        o.controllers = [];
+
+        /*
+         * MOUSE BOT CONTROL
+         *
+         * When botControl.mode is "mouse", the bot uses
+         * io_playerBotControl instead of normal AI.
+         */
+        if (global.gameManager.gameHandler.botControl.mode === "mouse") {
+            o.define({
+                CONTROLLERS: ["playerBotControl"],
+                FACING_TYPE: CC.FACING_TYPE
+                    ? CC.FACING_TYPE
+                    : Class.bot.FACING_TYPE,
+                AI: Class.bot.AI,
+            }, false, true, false);
+        } else {
+            /*
+             * Normal bot AI
+             */
+            o.define({
+                CONTROLLERS: CC.CONTROLLERS
+                    ? [...Class.bot.CONTROLLERS, ...CC.CONTROLLERS]
+                    : Class.bot.CONTROLLERS,
+
+                FACING_TYPE: CC.FACING_TYPE
+                    ? CC.FACING_TYPE
+                    : Class.bot.FACING_TYPE,
+
+                AI: Class.bot.AI,
+            }, false, true, false);
+        }
+
+        // Special healing tanks
+        if (CC && CC.HEALING_TANK && global.gameManager.gameHandler.botControl.mode !== "mouse") {
+            o.controllers = [];
+
+            o.define({
+                CONTROLLERS: [
+                    "healTeamMasters",
+                    "minion",
+                    [
+                        "wanderAroundMap",
+                        {
+                            replicatePlayerMovement: true,
+                            lookAtGoal: true
+                        }
+                    ]
+                ],
+
+                FACING_TYPE: CC.FACING_TYPE
+                    ? CC.FACING_TYPE
+                    : Class.bot.FACING_TYPE,
+
+                AI: Class.bot.AI,
+            }, false, true, false);
+        }
+
+        o.name = botName;
+        o.refreshBodyAttributes();
+        o.invuln = false;
+
+        o.on("define", () => {
+            let CC = Class[o.defs[0]];
+            if (!CC) CC = {};
+
+            /*
+             * Keep mouse control active when the bot is
+             * redefined/upgraded.
+             */
+            if (global.gameManager.gameHandler.botControl.mode === "mouse") {
+                o.controllers = [];
+
+                o.define({
+                    CONTROLLERS: ["playerBotControl"],
+                    FACING_TYPE: CC.FACING_TYPE
+                        ? CC.FACING_TYPE
+                        : Class.bot.FACING_TYPE,
+                    AI: Class.bot.AI,
+                }, false, true, false);
+            }
+        });
+
+    }, 3000 + Math.floor(Math.random() * 7000));
+
+    o.on('dead', () => {
+        setTimeout(() => {
+            if (global.nextTagBotTeam) {
+                let loc = getSpawnableArea(
+                    global.nextTagBotTeam,
+                    global.gameManager
+                );
+
+                this.spawnBots(
+                    loc,
+                    global.nextTagBotTeam
+                );
+            }
+        }, 10);
+
+        util.remove(
+            this.bots,
+            this.bots.indexOf(o)
+        );
+    });
+}

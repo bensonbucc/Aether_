@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Bot Control</title>
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
+}
+
+#botPanel {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    width: 220px;
+    padding: 12px;
+    background: rgba(20, 20, 20, 0.95);
+    color: white;
+    font-family: Arial, sans-serif;
+    border: 2px solid #555;
+    border-radius: 10px;
+    z-index: 999999;
+    pointer-events: auto;
+}
+
+#botPanel * {
+    pointer-events: auto;
+}
+
+#botPanel button {
+    width: 100%;
+    margin: 3px 0;
+    padding: 7px;
+    cursor: pointer;
+}
+
+#drag {
+    font-weight: bold;
+    cursor: move;
+    margin-bottom: 8px;
+}
+</style>
+
+</head>
+
+<body>
+
+<div id="botPanel">
+    <div id="drag">🤖 BOT CONTROL</div>
+
+```
+<label>Bot count:</label>
+<input id="count" type="number" value="10" min="1" max="150">
+
+<button>🖱️ Follow Mouse</button>
+<button>↖ Top Left</button>
+<button>↗ Top Right</button>
+<button>↙ Bottom Left</button>
+<button>↘ Bottom Right</button>
+<button>● Center</button>
+<button>➕ Spawn Bots</button>
+<button>❌ Remove Bots</button>
+```
+
+</div>
+
+<script>
+const panel = document.getElementById("botPanel");
+const drag = document.getElementById("drag");
+
+let dragging = false;
+let offsetX = 0;
+let offsetY = 0;
+
+drag.addEventListener("mousedown", (e) => {
+    e.stopPropagation();
+
+    dragging = true;
+    offsetX = e.clientX - panel.offsetLeft;
+    offsetY = e.clientY - panel.offsetTop;
+});
+
+document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+
+    e.stopPropagation();
+
+    panel.style.left = (e.clientX - offsetX) + "px";
+    panel.style.top = (e.clientY - offsetY) + "px";
+});
+
+document.addEventListener("mouseup", (e) => {
+    if (!dragging) return;
+
+    dragging = false;
+    e.stopPropagation();
+});
+</script>
+
+</body>
+</html>
