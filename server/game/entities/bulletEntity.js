@@ -1,4 +1,14 @@
+const { trackEntityReference, trackEntityReferences, untrackEntityReferences, referenceBits } = require('./referenceTracking.js');
 class bulletEntity { // Basically an (Entity) but with heavy limitations to improve performance.
+    get master() { return this._master; }
+    set master(value) { trackEntityReference(this, "master", value); }
+    get source() { return this._source; }
+    set source(value) { trackEntityReference(this, "source", value); }
+    get parent() { return this._parent; }
+    set parent(value) { trackEntityReference(this, "parent", value); }
+    get parentID() { return this._parentID; }
+    set parentID(value) { trackEntityReference(this, "parentID", value); }
+
     constructor(position, master) {
         if (!master) master = this;
         this.isGhost = false;
@@ -83,6 +93,7 @@ class bulletEntity { // Basically an (Entity) but with heavy limitations to impr
             }
         };
         entities.set(this.id, this);
+        trackEntityReferences(this);
         for (let v of global.gameManager.views) v.add(this);
     }
 
@@ -507,25 +518,29 @@ class bulletEntity { // Basically an (Entity) but with heavy limitations to impr
         }
         // Remove from parent lists if needed
         if (this.parent != null) util.remove(this.parent.children, this.parent.children.indexOf(this));
-        // Kill all of its children
-        for (const instance of entities.values()) {
-            if (instance.source.id === this.id) {
+        // Resolve references through the shared index instead of scanning the
+        // entire entity map for each projectile destruction.
+        const dependents = global.entityReferenceIndex?.get(this.id);
+        if (dependents) for (const [instance, references] of dependents) {
+            if (references & referenceBits.source) {
                 if (instance.settings.persistsAfterDeath) {
                     instance.source = instance;
                 } else if (this.master.label !== "Bacteria") {
                     instance.kill();
                 }
             }
-            if (instance.parent && instance.parent.id === this.id) {
+            if (references & referenceBits.parent) {
                 instance.parent = null;
             }
-            if (instance.master.id === this.id) {
+            if (references & referenceBits.master) {
                 if (this.master.label !== "Bacteria") {
                     instance.kill();
                     instance.master = instance;
                 }
             }
         }
+        global.entityReferenceIndex?.delete(this.id);
+        untrackEntityReferences(this);
         // Clear all of the gun bullet children
         for (const gun of this.guns.values()) {
             for (const bullet of gun.bulletchildren) {

@@ -10,17 +10,88 @@ tbody,
 serversDocs;
 
 let availableServers = [];
+let betaRefreshTimer;
+let selectorLoadVersion = 0;
+let selectorHashHandlerAttached = false;
+global.betaModeAuthorized = false;
+global.developerModeAuthorized = false;
+global.betaModePending = false;
+let betaModeAuthorized = false;
+let developerModeAuthorized = false;
+global.selectServerById = id => {
+    const server = servers?.find(candidate => candidate.id === id);
+    if (!server) return false;
+    const row = serverMap[id];
+    if (row?.onclick) row.onclick();
+    else {
+        location.hash = "#" + server.id;
+        global.locationHash = location.hash;
+        localStorage.setItem("lastServer", server.id);
+        global.serverAdd = server.ip;
+        if (server.ip === "localhost") global.serverAdd += ":" + server.port;
+    }
+    return true;
+};
+document.getElementById("playerKeyInput")?.addEventListener("input", () => {
+    global.betaModeAuthorized = false;
+    global.developerModeAuthorized = false;
+    betaModeAuthorized = false;
+    developerModeAuthorized = false;
+    global.betaModePending = true;
+    // Keep Play usable while the debounced visibility refresh runs. startGame
+    // performs an authoritative password check before routing beta testers.
+    selectorLoadVersion++;
+    clearTimeout(betaRefreshTimer);
+    betaRefreshTimer = setTimeout(() => {
+        if (Array.isArray(global.servers) && global.servers.length) global.loadServerSelector(global.servers);
+    }, 350);
+});
 
-global.loadServerSelector = (serverData, text) => {
+// Always re-check the current field value when Play is pressed. Mobile keyboards
+// and password managers can update a text input without firing `input` first.
+global.verifyBetaModeAccess = async key => {
+    try {
+        const response = await fetch("/api/beta-mode-access", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: String(key ?? "") }),
+        });
+        if (!response.ok) return { betaAuthorized: false, developerAuthorized: false };
+        const result = await response.json();
+        return {
+            betaAuthorized: result.betaAuthorized === true,
+            developerAuthorized: result.developerAuthorized === true,
+        };
+    } catch (error) {
+        console.warn("Could not check Beta Testing access.", error);
+        return { betaAuthorized: false, developerAuthorized: false };
+    }
+};
+
+global.loadServerSelector = async (serverData, text) => {
     if (!serverData.length) {
         if (text) loadEmptyServerSelector(text)
         return;
     }
-    document.getElementById("startButton").disabled = false;
+    const loadVersion = ++selectorLoadVersion;
+    global.betaModePending = true;
+    document.getElementById("startButton").disabled = true;
     servers = serverData;
+    serverMap = {};
+    availableServers = [];
+    const key = document.getElementById("playerKeyInput")?.value || "";
+    const authorization = await global.verifyBetaModeAccess(key);
+    if (loadVersion !== selectorLoadVersion) return;
+    betaModeAuthorized = authorization.betaAuthorized;
+    developerModeAuthorized = authorization.developerAuthorized;
+    global.betaModeAuthorized = betaModeAuthorized;
+    global.developerModeAuthorized = developerModeAuthorized;
+    global.betaModePending = false;
     let id = location.hash.slice(1);
-    if (!servers.some(server => server.id === id)) id = localStorage.getItem("lastServer");
-    if (!servers.some(server => server.id === id)) id = servers[0].id;
+    const canSeeBetaServers = betaModeAuthorized || developerModeAuthorized;
+    const canSelectServer = server => !server.betaOnly || canSeeBetaServers;
+    if (!servers.some(server => server.id === id && canSelectServer(server))) id = localStorage.getItem("lastServer");
+    if (!servers.some(server => server.id === id && canSelectServer(server))) id = servers.find(canSelectServer)?.id || servers[0].id;
     let serverSelector = document.getElementById("serverSelector");
       tbody = document.createElement("tbody");
       serversDocs = document.createElement("center");
@@ -45,7 +116,7 @@ global.loadServerSelector = (serverData, text) => {
             td1.textContent = `${server.region}`;
             const td2 = document.createElement("td");
             td2.classList.add("tdCenter");
-            td2.textContent = server.private ? "Private" : `${server.gameMode}`;
+            td2.textContent = server.private && !(server.betaOnly && canSeeBetaServers) ? "Private" : `${server.gameMode}`;
             const td3 = document.createElement("td");
             td3.textContent = server.players + (server.maxPlayers < 1 ? `/∞` : server.private ? `/?` : td3.textContent = `/${server.maxPlayers}`);
             tr.appendChild(td1);
@@ -53,7 +124,7 @@ global.loadServerSelector = (serverData, text) => {
             tr.appendChild(td3);
             tr.title = `${server.serverhost} - ${server.location} - #${server.id} (${td2.textContent})`;
             server.featured && tr.classList.add("featured");
-            if (server.unlisted) tr.style.display = 'none';
+            if (server.unlisted && !(server.betaOnly && canSeeBetaServers)) tr.style.display = 'none';
             tr.onclick = () => {
                 if (myServer.classList.contains("selected")) {
                     myServer.classList.remove("selected");
@@ -74,17 +145,21 @@ global.loadServerSelector = (serverData, text) => {
             serverMap[server.id] = tr;
             global.serverMap[server.ip] = tr;
             if (id === server.id) myServer = tr;
-            availableServers.push({ element: tr, region: server.region, gameMode: server.gameMode, id: server.id });
+            availableServers.push({ element: tr, region: server.region, gameMode: server.gameMode, id: server.id, unlisted: server.unlisted, betaOnly: server.betaOnly });
         } catch (e) {
             console.log(e);
         }
         if (myServer.onclick) myServer.onclick();
     });
-    window.addEventListener("hashchange", () => {
-        let id = location.hash.slice(1);
-        if (!serverMap[id]) return;
-        serverMap[id].onclick();
-    });
+    if (!selectorHashHandlerAttached) {
+        window.addEventListener("hashchange", () => {
+            let id = location.hash.slice(1);
+            if (!serverMap[id]) return;
+            serverMap[id].onclick();
+        });
+        selectorHashHandlerAttached = true;
+    }
+    document.getElementById("startButton").disabled = false;
 }
 
 
@@ -206,11 +281,12 @@ let initializeFilter = () => {
             s.gameMode.includes("Wars") ||
             s.gameMode.includes("TDM") ||
             s.gameMode.includes("Nexus") ||
-            s.gameMode.includes("Labyrinth")
+            s.gameMode.includes("Labyrinth") ||
+            s.gameMode.includes("Old Dreads")
         )) global.filters.gamemodes.normal.push(s);
 
         // Growth
-        if (s.gameMode.toLowerCase().includes("growth") || s.gameMode.includes("Old Dreadnoughts")) global.filters.gamemodes.growth.push(s);
+        if (s.gameMode.toLowerCase().includes("growth") || s.gameMode.includes("Old Dreads")) global.filters.gamemodes.growth.push(s);
 
         // Arms Race
         if (s.gameMode.includes("Arms Race")) global.filters.gamemodes.armsRace.push(s);
@@ -246,9 +322,14 @@ let initializeFilter = () => {
                   l[r] = y;
                   let X = true;
                   for (let C of availableServers) {
-                    let F = true;
-                    for (let N of l) F = F && N(C);
-                    C.element.style.display = F ? "" : "none";
+                    const canSeeBetaServers = betaModeAuthorized || developerModeAuthorized;
+                    let F = C.betaOnly && canSeeBetaServers;
+                    if (!F) {
+                        F = true;
+                        for (let N of l) F = F && N(C);
+                    }
+                    const allowedByVisibility = !C.unlisted || (C.betaOnly && canSeeBetaServers);
+                    C.element.style.display = F && allowedByVisibility ? "" : "none";
                     X = X && !F;
                   }
                   noServerMatches.style.display = X ? "" : "none";

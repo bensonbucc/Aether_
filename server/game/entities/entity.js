@@ -1,8 +1,20 @@
 let EventEmitter = require('events');
 global.entitiesIdLog = 0;
 const forceTwiggle = ["autospin", "turnWithSpeed", "spin", "fastspin", "veryfastspin", "withMotion", "smoothWithMotion", "looseWithMotion"];
+const forceTwiggleSet = new Set(forceTwiggle);
+const emptyCameraArray = Object.freeze([]);
 const { combineStats } = require('../../lib/definitions/facilitators.js');
+const { trackEntityReference, trackEntityReferences, untrackEntityReferences, referenceBits } = require('./referenceTracking.js');
 class Entity extends EventEmitter {
+    get master() { return this._master; }
+    set master(value) { trackEntityReference(this, "master", value); }
+    get source() { return this._source; }
+    set source(value) { trackEntityReference(this, "source", value); }
+    get parent() { return this._parent; }
+    set parent(value) { trackEntityReference(this, "parent", value); }
+    get parentID() { return this._parentID; }
+    set parentID(value) { trackEntityReference(this, "parentID", value); }
+
     constructor(position, master) {
         super();
         if (!master) master = this;
@@ -118,6 +130,7 @@ class Entity extends EventEmitter {
             }
         };
         entities.set(this.id, this);
+        trackEntityReferences(this);
         for (let v of global.gameManager.views) v.add(this);
         Events.emit('spawn', this);
     }
@@ -359,6 +372,24 @@ class Entity extends EventEmitter {
                 });
             }
         }
+        if (Array.isArray(set.UPGRADES_SCORE)) {
+            for (const entry of set.UPGRADES_SCORE) {
+                if (!entry || !Number.isFinite(entry.score) || entry.score < 0 || entry.class == null) continue;
+                const classes = Array.isArray(entry.class) ? entry.class : [entry.class];
+                let index = "";
+                for (const upgradeClass of classes) index += ensureIsClass(upgradeClass).index + "-";
+                this.upgrades.push({
+                    class: classes,
+                    score: entry.score,
+                    level: 0,
+                    index: index.substring(0, index.length - 1),
+                    tier: 0,
+                    branch: 0,
+                    branchLabel: this.branchLabel,
+                    redefineAll: false,
+                });
+            }
+        }
         if (set.SIZE != null) {
             this.SIZE = set.SIZE * this.squiggle;
             if (this.coreSize == null) this.coreSize = this.SIZE;
@@ -534,7 +565,7 @@ class Entity extends EventEmitter {
             this.settings.necroDefineGuns = {};
             for (let shape of this.settings.necroTypes) {
                 // Pick the first gun with the right necroType to use for stats and use its defineBullet function
-                this.settings.necroDefineGuns[shape] = this.gunsArrayed.filter((gun) => gun.bulletType.NECRO && (gun.bulletType.NECRO === shape || (gun.bulletType.NECRO === true && gun.bulletType.SHAPE === this.shape) || gun.bulletType.NECRO.includes(shape)))[0];
+                this.settings.necroDefineGuns[shape] = this.gunsArrayed.filter((gun) => gun.bulletType && gun.bulletType.NECRO && (gun.bulletType.NECRO === shape || (gun.bulletType.NECRO === true && gun.bulletType.SHAPE === this.shape) || gun.bulletType.NECRO.includes(shape)))[0];
             }
 
             this.necro = (host) => {
@@ -584,22 +615,40 @@ class Entity extends EventEmitter {
 
     refreshBodyAttributes() {
         const level = Math.min(Config.growth ? 120 : 45, this.level);
+        const growthHealthMultiplier = Config.growth_health_multiplier || 1;
+        const sizeLimit = this.roomClearanceSize;
+        const sizeOverflow = sizeLimit > 0 ? Math.max(0, this.getUncappedSize() / sizeLimit - 1) : 0;
+        const overflowStep = Config.growth_health_size_overflow_step;
+        const scoreHealthBonus = overflowStep > 0
+            ? Math.min(
+                Config.growth_health_score_bonus_cap || 0,
+                sizeOverflow / overflowStep * (Config.growth_health_score_bonus || 0)
+            )
+            : 0;
+        const scoreHealthStep = Config.growth_health_score_step || 0;
+        const ongoingScoreHealthBonus = scoreHealthStep > 0
+            ? Math.floor(Math.max(0, this.skill.score) / scoreHealthStep) * (Config.growth_health_score_bonus_per_step || 0)
+            : 0;
         let speedReduce = Math.min(
             Config.growth ? 4 : 2,
             this.size / (this.coreSize || this.SIZE)
         );
+        if (Config.old_dreadnoughts) {
+            const largeTankSpeedFactor = Config.old_dreadnought_large_tank_speed_factor || 1.25;
+            speedReduce = Math.max(1, speedReduce / largeTankSpeedFactor);
+        }
         this.acceleration = (1 * global.gameManager.runSpeed * this.ACCELERATION) / speedReduce;
         if (this.settings.reloadToAcceleration) this.acceleration *= this.skill.acl;
         this.topSpeed = (1 * global.gameManager.runSpeed * this.SPEED * this.skill.mob) / speedReduce;
         if (this.settings.reloadToAcceleration) this.topSpeed /= Math.sqrt(this.skill.acl);
         this.health.set(
-            ((this.settings.healthWithLevel ? 2 * level : 0) + this.HEALTH) *
+            ((this.settings.healthWithLevel ? 2 * level * growthHealthMultiplier : 0) + this.HEALTH) *
                 this.skill.hlt *
-                1
+                (1 + scoreHealthBonus + ongoingScoreHealthBonus)
         );
         this.health.resist = 1 - 1 / Math.max(1, this.RESIST + this.skill.brst);
         this.shield.set(
-            ((this.settings.healthWithLevel ? 0.6 * level : 0) + this.SHIELD) *
+            ((this.settings.healthWithLevel ? 0.6 * level * growthHealthMultiplier : 0) + this.SHIELD) *
                 this.skill.shi,
             Math.max(
                 0,
@@ -620,7 +669,13 @@ class Entity extends EventEmitter {
         this.recoilMultiplier = this.RECOIL_MULTIPLIER * 1;
     }
 
-    updateBodyInfo() { this.fov = 1 * this.FOV * 275 * Math.sqrt(this.size); }
+    updateBodyInfo() {
+        const baseSize = this.coreSize || this.SIZE || this.size;
+        const growth = Math.max(1, this.size / baseSize);
+        // Keep normal tanks' FOV unchanged while giving enlarged tanks a modest
+        // extra view as they grow beyond their base size.
+        this.fov = 1 * this.FOV * 275 * Math.sqrt(this.size) * Math.pow(growth, 0.08);
+    }
 
     bindToMaster(position, bond, isInvulnerable) {
         this.bond = bond;
@@ -678,21 +733,33 @@ class Entity extends EventEmitter {
         return Math.min(this.levelCap ?? Config.level_cap, this.skill.level);
     }
     // How this works: in 2025 growth a 3.00m player has the same size as a wall (tile)
-    get size() { // todo: make this dynamic compared to the level cap and not fixed at 45
+    getUncappedSize() {
         let level = this.level;
         if (!Config.growth) level = Math.min(45, level);
         let levelMultiplier = 1;
         if (this.settings.healthWithLevel) {
             levelMultiplier += Math.min(45, level) / 45;
         }
-        if (level > 45 && (this.isPlayer || this.isBot)) {
-            const scoreSince45 = this.skill.score - 26263;
+        if (level > 45 && (this.isPlayer || this.isBot || this.isAetherDevDuplicate)) {
+            const scoreSizeCap = Config.growth_size_score_cap > 0 ? Config.growth_size_score_cap : Infinity;
+            const scoreSince45 = Math.max(0, Math.min(this.skill.score, scoreSizeCap) - 26263);
             // wall size is not accurate for some reason lol
             const multiplier = 1.065;
             const wallSize = (global.gameManager.room.width / 32 / 2) * Math.SQRT2 * multiplier;
             levelMultiplier += ((scoreSince45 / 3e6) * wallSize) / Class.genericTank.SIZE / 2;
         }
-        return (this.coreSize || this.SIZE) * this.sizeMultiplier * levelMultiplier
+        return (this.coreSize || this.SIZE) * this.sizeMultiplier * levelMultiplier;
+    }
+    get roomClearanceSize() {
+        const tileWidth = global.gameManager?.room?.tileWidth;
+        const clearanceRatio = Config.growth_wall_clearance_ratio;
+        if (!(tileWidth > 0) || !(clearanceRatio > 0)) return Infinity;
+        const shapeRadius = lazyRealSizes[Math.floor(Math.abs(this.shape))] || 1;
+        return tileWidth * clearanceRatio / shapeRadius;
+    }
+    get size() {
+        const naturalSize = this.getUncappedSize();
+        return Math.min(naturalSize, this.roomClearanceSize);
     }
     get mass() {
         return this.density * (this.size ** 2 + 1);
@@ -718,8 +785,11 @@ class Entity extends EventEmitter {
 
     camera() {
         // Get bound data
-        const turretsAndProps = Array.from(this.turrets.values()).concat(Array.from(this.props.values()));
-        turretsAndProps.sort((a, b) => a.bound.layer - b.bound.layer);
+        let turretsAndProps = emptyCameraArray;
+        if (this.turrets.size || this.props.size) {
+            turretsAndProps = [...this.turrets.values(), ...this.props.values()];
+            turretsAndProps.sort((a, b) => a.bound.layer - b.bound.layer);
+        }
         
         // Calculate type value more efficiently
         const typeValue = (this.settings.drawHealth ? 0x02 : 0) + 
@@ -731,6 +801,19 @@ class Entity extends EventEmitter {
                            this.type === "food" ? 10 : 
                            this.type === "tank" ? 5 : 
                            this.type === "crasher" ? 1 : 0));
+
+        const size = this.size;
+        const realSize = size * lazyRealSizes[Math.floor(Math.abs(this.shape))];
+        let guns = emptyCameraArray;
+        if (this.guns.size) {
+            guns = [];
+            for (const gun of this.guns.values()) guns.push(gun.getPhotoInfo());
+        }
+        let turrets = emptyCameraArray;
+        if (turretsAndProps.length) {
+            turrets = [];
+            for (const turret of turretsAndProps) turrets.push(turret.camera());
+        }
 
         // Split the score in half if we are in incognito mode
         let score = this.skill.score;
@@ -748,14 +831,14 @@ class Entity extends EventEmitter {
             y: this.y,
             vx: this.velocity.x,
             vy: this.velocity.y,
-            size: this.size,
-            realSize: this.realSize,
+            size,
+            realSize,
             health: this.health.display(),
             shield: this.shield.display(),
             alpha: this.alpha,
             facing: this.facing,
             vfacing: this.vfacing,
-            twiggle: forceTwiggle.includes(this.facingType) || this.eastereggs.braindamage || 
+            twiggle: forceTwiggleSet.has(this.facingType) || this.eastereggs.braindamage || 
                     this.settings.connectChildrenOnCamera || (this.facingType === "locksFacing" && this.control.alt) ||
                     this.syncWithTank,
             layer: layerValue,
@@ -764,8 +847,8 @@ class Entity extends EventEmitter {
             drawFill: this.drawFill,
             name: (this.nameColor || "#ffffff") + this.name,
             score: this.settings.scoreLabel || score,
-            guns: Array.from(this.guns.values()).map(gun => gun.getPhotoInfo()),
-            turrets: turretsAndProps.map(turret => turret.camera()),
+            guns,
+            turrets,
         };
         
         // Process child camera connections if needed
@@ -776,14 +859,17 @@ class Entity extends EventEmitter {
                 let sumY = cameraInfo.y;
                 
                 // Process all children in one pass with a single array
-                const allChildren = [...this.children, ...this.bulletchildren];
-                for (let i = 0; i < allChildren.length; i++) {
-                    sumX += allChildren[i].x;
-                    sumY += allChildren[i].y;
+                for (const child of this.children) {
+                    sumX += child.x;
+                    sumY += child.y;
+                }
+                for (const child of this.bulletchildren) {
+                    sumX += child.x;
+                    sumY += child.y;
                 }
                 
                 // Calculate average position (add 1 to count for this entity)
-                const totalCount = allChildren.length + 1;
+                const totalCount = this.children.length + this.bulletchildren.length + 1;
                 this.cameraOverrideX = sumX / totalCount;
                 this.cameraOverrideY = sumY / totalCount;
             } else {
@@ -875,7 +961,11 @@ class Entity extends EventEmitter {
             }
         } else {
             for (let i = 0; i < branchId; i++) { number += this.skippedUpgrades[i] ?? 0; };
-            if (number < this.upgrades.length && this.skill.level >= this.upgrades[number].level) {
+            if (number < this.upgrades.length && (
+                this.upgrades[number].score != null
+                    ? this.skill.score >= this.upgrades[number].score
+                    : this.skill.level >= this.upgrades[number].level
+            )) {
                 upgraded = true;
                 let upgrade = this.upgrades[number], upgradeClass = upgrade.class, upgradeBranch = upgrade.branch, redefineAll = upgrade.redefineAll;
                 if (redefineAll) {
@@ -890,6 +980,17 @@ class Entity extends EventEmitter {
             }
         }
         if (!upgraded) return;
+        this.finishUpgrade();
+    }
+
+    finishUpgrade() {
+        if (Config.old_dreadnoughts && this.rerootUpgradeTree === "dreadnought_dreadsV1") {
+            this.upgrades = this.upgrades.filter(upgrade => {
+                if (upgrade.score == null) return true;
+                const classes = Array.isArray(upgrade.class) ? upgrade.class : [upgrade.class];
+                return !classes.includes("dreadnought_dreadsV1");
+            });
+        }
         this.emit("upgrade", { body: this });
         if (this.settings.shakeProperties) this.settings.shakeProperties.forEach(info => {
             if (info.applyOn.upgrade) {
@@ -967,8 +1068,10 @@ class Entity extends EventEmitter {
             this.velocity.null();
         }
         // Apply acceleration
-        this.velocity.x += this.accel.x;
-        this.velocity.y += this.accel.y;
+        const zoneSpeed = this.isPlayer ? (this.aetherZoneEffect?.speed || 1) : 1;
+        const reverse = this.isPlayer && this.aetherZoneEffect?.reverse ? -1 : 1;
+        this.velocity.x += this.accel.x * zoneSpeed * reverse;
+        this.velocity.y += this.accel.y * zoneSpeed * reverse;
         // Reset acceleration
         this.accel.null();
         // Apply motion
@@ -978,12 +1081,17 @@ class Entity extends EventEmitter {
     }
 
     friction() {
+        const spaceTank = Config.space_physics && this.type === "tank";
+        const speedLimit = (spaceTank
+            ? this.topSpeed * (Config.space_speed_multiplier || 1.5)
+            : this.maxSpeed) * (this.isPlayer ? (this.aetherZoneEffect?.speed || 1) : 1);
+        const damping = spaceTank ? (Config.space_drag ?? 0.002) : this.damp * (this.isPlayer && this.aetherZoneEffect?.slippery ? 0.12 : 1);
         var motion = this.velocity.length,
-            excess = motion - this.maxSpeed;
-        if (excess > 0 && this.damp) {
-            var k = this.damp / global.gameManager.roomSpeed,
+            excess = motion - speedLimit;
+        if (excess > 0 && damping) {
+            var k = damping / global.gameManager.roomSpeed,
                 drag = excess / (k + 1),
-                finalvelocity = this.maxSpeed + drag;
+                finalvelocity = speedLimit + drag;
             this.velocity.x = finalvelocity * this.velocity.x / motion;
             this.velocity.y = finalvelocity * this.velocity.y / motion;
         }
@@ -1081,7 +1189,7 @@ class Entity extends EventEmitter {
                             ? this.label : util.addArticle(this.label)
                 : this.master.name + "'s " + this.label;
             // Calculate the jackpot
-            let jackpot = util.getJackpot(this.skill.score) / this.collisionArray.length;
+            let jackpot = util.getJackpot(this.skill.score) * (Config.kill_score_multiplier || 1) / this.collisionArray.length;
             // Now for each of the things that kill me...
             for (let i = 0; i < this.collisionArray.length; i++) {
                 let instance = this.collisionArray[i];
@@ -1091,10 +1199,21 @@ class Entity extends EventEmitter {
                     if (instance.master.type === "tank" || instance.master.type === "miniboss") {
                         notJustFood = true;
                     }
-                    instance.master.skill.score += jackpot;
+                    const scoreOwner = instance.master;
+                    const previousScore = scoreOwner.skill.score;
+                    scoreOwner.skill.score += jackpot;
+                    const healthStep = Config.growth_health_score_step || 0;
+                    if (healthStep > 0 && Math.floor(previousScore / healthStep) !== Math.floor(scoreOwner.skill.score / healthStep)) {
+                        scoreOwner.refreshBodyAttributes();
+                    }
                     killers.push(instance.master); // And keep track of who killed me
                 } else if (instance.settings.acceptsScore) {
+                    const previousScore = instance.skill.score;
                     instance.skill.score += jackpot;
+                    const healthStep = Config.growth_health_score_step || 0;
+                    if (healthStep > 0 && Math.floor(previousScore / healthStep) !== Math.floor(instance.skill.score / healthStep)) {
+                        instance.refreshBodyAttributes();
+                    }
                 }
                 killTools.push(instance); // Keep track of what actually killed me
             }
@@ -1184,7 +1303,7 @@ class Entity extends EventEmitter {
             if (killText === "You have been kille") {
                 killText = "You have died a stupid death";
             }
-            if (Config.outbreak && !this.zombified) {
+            if (Config.outbreak && !this.zombified && !this.isLamentisCursed) {
                 killText = `You died and became a Zombified ${this.label}`
                 killSuffix = "!"
             }
@@ -1219,7 +1338,7 @@ class Entity extends EventEmitter {
         entitiesToAvoid.push(this); this.isProtected = true;
     }
     
-    say(message, duration = Config.CHAT_MESSAGE_DURATION) {
+    say(message, duration = Config.chat_message_duration) {
         if (!chats[this.id]) {
             chats[this.id] = [];
             chats[this.id].messages = [];
@@ -1253,9 +1372,11 @@ class Entity extends EventEmitter {
         }
         // Remove from parent lists if needed
         if (this.parent != null) util.remove(this.parent.children, this.parent.children.indexOf(this));
-        // Kill all of its children
-        for (const instance of entities.values()) {
-            if (instance.source.id === this.id || instance.parentID == this.id) {
+        // Clean up dependents through the reference index instead of scanning
+        // every live entity for each destroyed projectile or child.
+        const dependents = global.entityReferenceIndex?.get(this.id);
+        if (dependents) for (const [instance, references] of dependents) {
+            if (references & (referenceBits.source | referenceBits.parentID)) {
                 if (instance.settings.persistsAfterDeath) {
                     instance.source = instance;
                 } else if (this.master.label !== "Bacteria") {
@@ -1263,10 +1384,10 @@ class Entity extends EventEmitter {
                     targetableEntities.delete(instance.id);
                 }
             }
-            if (instance.parent && instance.parent.id === this.id) {
+            if (references & referenceBits.parent) {
                 instance.parent = null;
             }
-            if (instance.master.id === this.id) {
+            if (references & referenceBits.master) {
                 if (this.master.label !== "Bacteria") {
                     instance.kill();
                     instance.master = instance;
@@ -1274,6 +1395,8 @@ class Entity extends EventEmitter {
                 }
             }
         };
+        global.entityReferenceIndex?.delete(this.id);
+        untrackEntityReferences(this);
         // Remove everything bound to it
         for (const turret of this.turrets.values()) {
             turret.destroy();

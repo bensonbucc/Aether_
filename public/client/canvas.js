@@ -47,7 +47,7 @@ class Canvas {
         global.canvas = this;
     }
     init() {
-        global.mobile && optMobile.value == "mobile" || optMobile.value == "mobileWithBigJoysticks" ? ( // Mobile
+        global.mobile && (optMobile.value == "mobile" || optMobile.value == "mobileWithBigJoysticks" || document.getElementById("optJoystickControls").checked) ? ( // Mobile
             this.mobilecv = this.cv,
             this.controlTouch = null,
             this.movementTouch = null,
@@ -121,6 +121,23 @@ class Canvas {
     }
 
     keyDown(event) {
+        if (event.code === "F8" && global.dev_build && !event.repeat) {
+            window.__AETHER_STACKER_ENABLED__ =
+                !window.__AETHER_STACKER_ENABLED__;
+
+            window.__AETHER_STACKER_START__ = performance.now();
+
+            global.createMessage(
+                window.__AETHER_STACKER_ENABLED__
+                    ? "Cyclone stacker enabled."
+                    : "Cyclone stacker disabled.",
+                1500
+            );
+
+            this.socket.cmd.reactNow();
+            return;
+        }
+
         if (global.dailyTankAd.renderUI) return;
         if (global.specialPressed) {
             event.preventDefault();
@@ -465,7 +482,36 @@ class Canvas {
                     }
                 }
                 if (statIndex !== -1) {
-                    this.socket.talk('x', statIndex, 0);
+                    const skill = gui.skills[9 - statIndex];
+                    const bar = global.clickables.stat.get(statIndex);
+
+                    if (skill && bar && gui.points > 0) {
+                        // The mouse position directly represents the percentage
+                        // of the stat bar that should be upgraded.
+                        const position = Math.max(
+                            0,
+                            Math.min(1, (mpos.x - bar.x) / bar.w)
+                        );
+
+                        // Convert the clicked percentage directly into a stat level.
+                        let targetLevel = Math.ceil(position * skill.softcap);
+
+                        // The very left edge should still purchase one point.
+                        targetLevel = Math.max(1, targetLevel);
+
+                        // Never request more than the stat's available upgrade range.
+                        targetLevel = Math.min(targetLevel, skill.softcap);
+
+                        const upgrades = Math.min(
+                            gui.points,
+                            Math.max(0, targetLevel - skill.amount)
+                        );
+
+                        // One physical mouse click can spend multiple points.
+                        for (let i = 0; i < upgrades; i++) {
+                            this.socket.talk('x', statIndex, 0);
+                        }
+                    }
                 } else if (
                     !global.dailyTankAd.renderUI &&
                     global.clickables.optionsMenu.toggleBoxes.check(mpos) == -1 && 
@@ -477,7 +523,17 @@ class Canvas {
                     global.clickables.optionsMenu.mainMenuIdle.check(mpos) === false &&
                     upgradeCheck == -1 && 
                     !global.died
-                ) this.socket.cmd.set(primaryFire, true);
+                ) {
+                    this.socket.cmd.set(primaryFire, true);
+
+                    if (
+                        global.dev_build &&
+                        window.__AETHER_STACKER_ENABLED__ &&
+                        String(window.__AETHER_GUI__?.class || "").toLowerCase() === "cyclone"
+                    ) {
+                        window.__AETHER_STACKER_START__ = performance.now();
+                    }
+                }
                 break;
             case 1:
                 this.socket.cmd.set(5, true);
@@ -1129,3 +1185,7 @@ class Canvas {
     }
 }
 export { Canvas }
+
+
+
+

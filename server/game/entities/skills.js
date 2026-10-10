@@ -130,7 +130,7 @@ class Skill {
         return true;
     }
     get scoreForLevel() {
-        return Math.ceil(Math.pow(this.level, 3) * 0.3083);
+        return Math.ceil(Math.pow(this.level, 3) * 0.3083 / (Config.growth_rate || 1));
     }
     get levelScore() {
         return this.levelUpScore - this.deduction;

@@ -1,4 +1,4 @@
-const {combineStats, makeMenu, weaponArray} = require('../../facilitators.js')
+﻿const {combineStats, makeMenu, weaponArray} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 const g = require('../../gunvals.js')
 
@@ -13,7 +13,7 @@ Class.elite = {
     BODY: {
         FOV: 1.25,
         SPEED: 0.15 * base.SPEED,
-        HEALTH: 9 * base.HEALTH,
+        HEALTH: 27 * base.HEALTH,
         DAMAGE: 4.5 * base.DAMAGE,
         REGEN: 0.5 * base.REGEN,
     },
@@ -421,7 +421,7 @@ Class.delta = {
     BODY: {
         FOV: 1.25,
         SPEED: 0.15 * base.SPEED,
-        HEALTH: 14 * base.HEALTH,
+        HEALTH: 42 * base.HEALTH,
         DAMAGE: 3 * base.DAMAGE,
         REGEN: 0.5 * base.REGEN,
     },
@@ -571,7 +571,7 @@ Class.destroyerLegion = {
     AI: { NO_LEAD: false },
     SIZE: 30,
     BODY: {
-        HEALTH: 8 * base.HEALTH,
+        HEALTH: 24 * base.HEALTH,
     },
     GUNS: weaponArray({
         POSITION: [5, 16, 1, 6, 0, 60, 0],
@@ -601,7 +601,7 @@ Class.gunnerLegion = {
     AI: { NO_LEAD: false },
     SIZE: 30,
     BODY: {
-        HEALTH: 8 * base.HEALTH,
+        HEALTH: 24 * base.HEALTH,
     },
     GUNS: [
         {
@@ -639,7 +639,7 @@ Class.sprayerLegion = {
     SKILL: [0, 9, 3, 9, 2, 9, 9, 9, 9, 0],
     HAS_NO_RECOIL: true,
     BODY: {
-        HEALTH: 8 * base.HEALTH,
+        HEALTH: 24 * base.HEALTH,
     },
     TURRETS: weaponArray({
         POSITION: [14, 6, 0, 60, 190, 0],
@@ -654,7 +654,7 @@ Class.battleshipLegion = {
     AI: { NO_LEAD: false },
     SIZE: 30,
     BODY: {
-        HEALTH: 8 * base.HEALTH,
+        HEALTH: 24 * base.HEALTH,
     },
     GUNS: weaponArray([
         {
@@ -693,7 +693,7 @@ Class.spawnerLegion = {
     AI: { NO_LEAD: false },
     SIZE: 30,
     BODY: {
-        HEALTH: 8 * base.HEALTH,
+        HEALTH: 24 * base.HEALTH,
     },
     GUNS: [
         {
@@ -911,3 +911,4 @@ Class.legionaryCrasherFix = {
         }
     ],
 }
+

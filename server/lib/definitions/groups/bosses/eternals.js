@@ -1,4 +1,4 @@
-const {combineStats, LayeredBoss, makeMenu, setTurretProjectileRecoil} = require('../../facilitators.js')
+﻿const {combineStats, LayeredBoss, makeMenu, setTurretProjectileRecoil} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 const g = require('../../gunvals.js')
 const preset = require('../../presets.js')
@@ -13,7 +13,7 @@ Class.eternal = {
     CONTROLLERS: [["minion", {orbit: 240}]],
     BODY: {
         FOV: 1,
-        HEALTH: 3000,
+        HEALTH: 9000,
         SHIELD: 150,
         REGEN: base.REGEN * 0.1,
         SPEED: base.SPEED * 0.15,
@@ -75,3 +75,4 @@ amun.addLayer({turret: {
     TYPE: "forkTurret",
 }}, true, 4)
 Class.amun.ALPHA = 0.3
+

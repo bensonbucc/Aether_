@@ -3,3 +3,8 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+/server/data/tank-editor-saves.json
+/server/data/tank-editor-saves.json.*.tmp
+/server/data/tank-editor-saves.json.lock
+.aether-discord-links/
+/server/game/ai/null-memory.json

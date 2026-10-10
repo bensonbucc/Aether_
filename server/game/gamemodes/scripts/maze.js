@@ -18,7 +18,7 @@ class Maze {
                 y: global.gameManager.room.height / height * element.y - global.gameManager.room.height / 2 + global.gameManager.room.height / height / 2 * element.size
             })
             wall.define("wall");
-            wall.SIZE = global.gameManager.room.width / width / 2 * element.size / lazyRealSizes[4] * Math.SQRT2 - 2;
+            wall.SIZE = (global.gameManager.room.width / width / 2 * element.size / lazyRealSizes[4] * Math.SQRT2 - 2);
             wall.protect();
             wall.life();
             makeHitbox(wall);
@@ -44,3 +44,5 @@ class Maze {
 }
 
 module.exports = { Maze };
+
+

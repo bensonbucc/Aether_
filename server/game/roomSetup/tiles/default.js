@@ -1,4 +1,4 @@
-let spawnPermanentAntiTankMachineGun = (loc, gameManager) => {
+﻿let spawnPermanentAntiTankMachineGun = (loc, gameManager) => {
     let o = new Entity(loc);
     o.define('antiTankMachineGun');
     o.define({
@@ -13,7 +13,7 @@ let spawnPermanentAntiTankMachineGun = (loc, gameManager) => {
 };
 
 tileClass.normal = new Tile({
-    COLOR: "white",
+    COLOR: Config.haunted_asylum ? "#e8d58f" : "white",
     NAME: "Default Tile",
     INIT: (tile, room) => room.spawnableDefault.push(tile),
 });
@@ -42,7 +42,7 @@ tileClass.wall = new Tile({
         })
         if (Config.spooky_theme) {
             let eyeSize = 12 * (Math.random() + 0.75);
-            let spookyEye = new Entity({ x: wall.x + (wall.size - eyeSize * 2) * Math.random() - wall.size / 2, y: wall.y + (wall.size - eyeSize * 2) * Math.random() - wall.size / 2 })
+            let spookyEye = new Entity({ x: o.x + (o.size - eyeSize * 2) * Math.random() - o.size / 2, y: o.y + (o.size - eyeSize * 2) * Math.random() - o.size / 2 })
             spookyEye.define("hwEye");
             spookyEye.define({FACING_TYPE: ["manual", {angle: ran.randomAngle()}]})
             spookyEye.SIZE = eyeSize;
@@ -55,3 +55,5 @@ tileClass.atmg = new Tile({
     NAME: "ATMG Tile",
     INIT: (tile, room, gameManager) => spawnPermanentAntiTankMachineGun(tile.loc, gameManager)
 })
+
+

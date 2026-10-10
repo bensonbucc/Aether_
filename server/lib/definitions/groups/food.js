@@ -763,6 +763,55 @@ Class.tesseract = {
     GIVE_KILL_MESSAGE: true
 }
 
+// Project the 5D hypercube into 3D and render all of its square faces.
+const penteractShape = (() => {
+    const axes = [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [0.68, 0.68, 0.68],
+        [-0.68, 0.68, -0.68],
+    ];
+    const vertexes = Array.from({ length: 32 }, (_, mask) => {
+        const point = [0, 0, 0];
+        for (let dimension = 0; dimension < 5; dimension++) {
+            const sign = mask & (1 << dimension) ? 1 : -1;
+            for (let axis = 0; axis < 3; axis++) point[axis] += sign * axes[dimension][axis];
+        }
+        return point;
+    });
+    const faces = [];
+    for (let first = 0; first < 5; first++) {
+        for (let second = first + 1; second < 5; second++) {
+            const fixed = Array.from({ length: 5 }, (_, dimension) => dimension)
+                .filter(dimension => dimension !== first && dimension !== second);
+            for (let combination = 0; combination < 8; combination++) {
+                let base = 0;
+                for (let bit = 0; bit < fixed.length; bit++) {
+                    if (combination & (1 << bit)) base |= 1 << fixed[bit];
+                }
+                faces.push([
+                    base,
+                    base | (1 << first),
+                    base | (1 << first) | (1 << second),
+                    base | (1 << second),
+                ]);
+            }
+        }
+    }
+    return makePolyhedron({ VERTEXES: vertexes, FACES: faces, VERTEXES_SCALE: 0.04, SCALE: 7.5 });
+})();
+
+Class.penteract = {
+    PARENT: "tesseract",
+    LABEL: "Penteract",
+    NAME: "The Penteract",
+    VALUE: 50_000_000,
+    SIZE: 27,
+    COLOR: "egg",
+    SHAPE: penteractShape,
+}
+
 // Presents (todo: make this a self-creating function)
 Class.presentRY = makePresent("red", "yellow")
 Class.presentRP = makePresent("red", "purple")

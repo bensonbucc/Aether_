@@ -1,0 +1,15 @@
+module.exports = {
+    mode: "ffa",
+    aether_zones: true,
+    do_not_override_room: false,
+    teams: 0,
+    no_bases: true,
+    room_setup: ["room_aether_zones"],
+    map_tile_width: 840,
+    map_tile_height: 840,
+    bot_cap: 5,
+    disable_auto_bots: true,
+    enable_food: false,
+    enable_bosses: false,
+    player_cap: 80,
+};

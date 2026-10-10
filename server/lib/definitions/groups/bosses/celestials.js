@@ -1,4 +1,4 @@
-const {combineStats, LayeredBoss, makeMenu, setTurretProjectileRecoil} = require('../../facilitators.js')
+﻿const {combineStats, LayeredBoss, makeMenu, setTurretProjectileRecoil} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 const g = require('../../gunvals.js')
 const preset = require('../../presets.js')
@@ -20,7 +20,7 @@ Class.celestial = {
     CONTROLLERS: [["minion", {turnwiserange: 360}]],
     BODY: {
         FOV: 1,
-        HEALTH: 1500,
+        HEALTH: 4500,
         SHIELD: 75,
         REGEN: base.REGEN * 0.3,
         SPEED: base.SPEED * 0.5,
@@ -445,3 +445,4 @@ napoleon.addLayer({turret: {
     POSITION: [10.5, 8, 0, null, 160, 0],
     TYPE: "napoleonUpperTurret",
 }}, true, 6);
+

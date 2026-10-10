@@ -71,6 +71,7 @@ class Gun extends EventEmitter {
             this.drawAbove = (info.PROPERTIES.DRAW_ABOVE == null) ? false : info.PROPERTIES.DRAW_ABOVE;
             this.stack = (info.PROPERTIES.STACK_GUN == null) ? true : info.PROPERTIES.STACK_GUN;
             this.identifier = info.PROPERTIES.IDENTIFIER ?? null;
+            this.aetherSeptaStackerBarrel = info.PROPERTIES.AETHER_SEPTA_STACKER_BARREL === true;
             if (info.PROPERTIES.TYPE != null && !Config.disable_guns) {
                 this.canShoot = true;
                 this.label = info.PROPERTIES.LABEL ?? "";
@@ -190,6 +191,74 @@ class Gun extends EventEmitter {
     }
 
     shoot() {
+        const isStackerGun = this.body.septaStackerGun
+            ? this.body.septaStackerGun === this
+            : this.aetherSeptaStackerBarrel;
+        if (this.body.septaStacker && isStackerGun) {
+            const target = this.body.septaStackerTarget;
+            if (target && Number.isFinite(target.x) && Number.isFinite(target.y)) {
+                const angle = Math.atan2(target.y, target.x);
+                const gunlength = this.length + this.spawnOffset * this.width * this.settings.size / 2;
+                // Keep the stream's launch point on the mouse-facing side while the tank spins.
+                const offsetFinalX = gunlength * Math.cos(angle);
+                const offsetFinalY = gunlength * Math.sin(angle);
+                const skill = this.bulletStats === "master" ? this.body.skill : this.bulletStats;
+                this.fire(offsetFinalX, offsetFinalY, skill, angle);
+                return;
+            }
+        }
+        const cycloneDev =
+            this.body.label === "Cyclone" &&
+            this.body.socket?.permissions?.class === "developer" &&
+            this.body.gunsArrayed?.length === 12;
+
+        if (cycloneDev) {
+            const guns = this.body.gunsArrayed || [];
+            const target = this.body.master?.control?.target;
+
+            if (guns.length === 12 && target) {
+                const targetAngle = Math.atan2(target.y, target.x);
+
+                let mainGun = guns[0];
+                let bestDifference = Infinity;
+
+                for (const gun of guns) {
+                    const gunAngle = gun.angle + this.body.facing;
+                    const difference = Math.abs(Math.atan2(
+                        Math.sin(targetAngle - gunAngle),
+                        Math.cos(targetAngle - gunAngle)
+                    ));
+
+                    if (difference < bestDifference) {
+                        bestDifference = difference;
+                        mainGun = gun;
+                    }
+                }
+
+                const mainAngle = mainGun.angle + this.body.facing;
+                const gunlength = mainGun.length +
+                    mainGun.spawnOffset * mainGun.width * mainGun.settings.size / 2;
+
+                const angle1 = mainGun.direction + mainAngle;
+                const angle2 = mainAngle;
+
+                const offset_base_x = mainGun.offset * Math.cos(angle1);
+                const offset_base_y = mainGun.offset * Math.sin(angle1);
+                const offset_end_x = gunlength * Math.cos(angle2);
+                const offset_end_y = gunlength * Math.sin(angle2);
+
+                const offsetFinalX = offset_base_x + offset_end_x;
+                const offsetFinalY = offset_base_y + offset_end_y;
+
+                const skill = this.bulletStats === "master"
+                    ? this.body.skill
+                    : this.bulletStats;
+
+                this.fire(offsetFinalX, offsetFinalY, skill, targetAngle);
+                return;
+            }
+        }
+
         // Find gun's current angle position and length
         let angle1 = this.direction + this.angle + this.body.facing,
             angle2 = this.angle + this.body.facing,
@@ -205,10 +274,13 @@ class Gun extends EventEmitter {
             offsetFinalX = offset_base_x + offset_end_x,
             offsetFinalY = offset_base_y + offset_end_y,
             skill = this.bulletStats === "master" ? this.body.skill : this.bulletStats;
-        
+
         this.fire(offsetFinalX, offsetFinalY, skill);
-    }
-    live() {
+    }    live() {
+        const isStackerGun = this.body.septaStackerGun
+            ? this.body.septaStackerGun === this
+            : this.aetherSeptaStackerBarrel;
+        if (this.body.septaStacker && !isStackerGun) return;
         this.recoil();
 
         if (!this.canShoot) return
@@ -230,7 +302,9 @@ class Gun extends EventEmitter {
         if (shootPermission || !this.waitToCycle) {
             let speed = this.fixedReload ? global.gameManager.roomSpeed : global.gameManager.runSpeed;
             if (this.cycleTimer < 1) {
-                this.cycleTimer += 1 / (this.settings.reload * speed * (this.calculator == "necro" || this.calculator == "fixed reload" ? 1 : sk.rld));
+                const stackerReload = this.body.septaStacker && isStackerGun ? 4 : 1;
+                const zoneReload = (this.body.master.isPlayer || this.body.master.isBot) ? (this.body.master.aetherZoneEffect?.reload || 1) : 1;
+                this.cycleTimer += stackerReload * zoneReload / (this.settings.reload * speed * (this.calculator == "necro" || this.calculator == "fixed reload" ? 1 : sk.rld));
             }
         }
         // Firing routines
@@ -293,7 +367,7 @@ class Gun extends EventEmitter {
             });
         }
     }
-    fire(gx, gy, sk) {
+    fire(gx, gy, sk, forcedAngle = null) {
         // Recoil
         sk = this.bulletStats === "master" ? this.body.skill : this.bulletStats;
         this.lastShot.time = util.time();
@@ -315,7 +389,7 @@ class Gun extends EventEmitter {
         spread *= Math.PI / 180;
         // Find speed
         let vecLength = (this.negRecoil ? -1 : 1) * this.settings.speed * global.gameManager.runSpeed * sk.spd * (1 + shudder),
-          vecAngle = this.angle + this.body.facing + spread,
+          vecAngle = (forcedAngle ?? (this.angle + this.body.facing)) + spread,
           s = new Vector(
             vecLength * Math.cos(vecAngle),
             vecLength * Math.sin(vecAngle)
@@ -431,7 +505,45 @@ class Gun extends EventEmitter {
         o.color.brightnessShift = undefined;
         o.color.allowBrightnessInvert = undefined;
         o.define(this.bulletType);
-        // Pass the gun attributes
+
+        // Aether bot-panel Overlord drone control.
+  // IMPORTANT:
+  // Keep the actual Class.drone created by Overlord.
+  // Do NOT replace it with the selected tank class.
+  const droneMaster = this.master;
+
+  if (
+      this.calculator === "drone" &&
+      droneMaster &&
+      droneMaster.__openArrasBotControl === true &&
+      droneMaster.defs &&
+      droneMaster.defs[0] === "overlord"
+  ) {
+      // Preserve the real Overlord drone definition.
+      // Only inherit the bot-panel ownership/control state.
+      o.__openArrasBotControl = true;
+      o.__openArrasBotOwner =
+          droneMaster.__openArrasBotOwner;
+      o.__aetherBotControl =
+          droneMaster.__aetherBotControl;
+      o.botControlEnabled = true;
+      o.botControlType = droneMaster.botControlType;
+
+      // Keep the REAL Class.drone, but replace only its normal
+      // minion/hover AI with the owner's direct bot-panel controller.
+      // IMPORTANT:
+      // Entity.define() ADDS controllers instead of replacing them.
+      // The real Class.drone normally receives minion/hangOutNearMaster
+      // controllers, which fight the bot-panel mouse controller.
+      //
+      // Replace the controller list completely so the drone has exactly
+      // one movement controller: the owner's bot-panel controller.
+      o.controllers = [];
+      o.define({
+          CONTROLLERS: ["controlledOverlordDrone"],
+      }, false, false, false);
+  }
+  // Pass the gun attributes
         o.define({
             BODY: this.interpret(),
             SKILL: this.getSkillRaw(),
@@ -462,6 +574,38 @@ class Gun extends EventEmitter {
             o.settings.necroDefineGuns[shape] = this;
         }
         o.refreshBodyAttributes();
+        const zoneEffect = (this.body.master.isPlayer || this.body.master.isBot) ? this.body.master.aetherZoneEffect : null;
+        if (zoneEffect) {
+            if (zoneEffect.spread || zoneEffect.reverseShots) {
+                const angle = (Math.random() - 0.5) * (zoneEffect.spread || 0) + (zoneEffect.reverseShots ? Math.PI : 0);
+                const velocityX = o.velocity.x, velocityY = o.velocity.y;
+                o.velocity.x = velocityX * Math.cos(angle) - velocityY * Math.sin(angle);
+                o.velocity.y = velocityX * Math.sin(angle) + velocityY * Math.cos(angle);
+            }
+            if (zoneEffect.randomBulletSpeed) {
+                const [minimum, maximum] = zoneEffect.randomBulletSpeed;
+                const speedMultiplier = minimum + Math.random() * (maximum - minimum);
+                o.velocity.x *= speedMultiplier;
+                o.velocity.y *= speedMultiplier;
+                o.topSpeed *= speedMultiplier;
+                o.maxSpeed = Math.max(o.maxSpeed, o.topSpeed);
+            }
+            const zoneBulletSpeed = zoneEffect.bulletSpeed || 1;
+            o.velocity.x *= zoneBulletSpeed;
+            o.velocity.y *= zoneBulletSpeed;
+            o.topSpeed *= zoneBulletSpeed;
+            o.damage *= zoneEffect.bulletDamage || 1;
+            if (zoneEffect.ricochet) {
+                o.aetherRicochet = true;
+                o.aetherRicochetBaseSpeed = Math.max(1, o.topSpeed);
+            }
+            if (zoneEffect.bulletSize) {
+                o.SIZE *= zoneEffect.bulletSize;
+                o.refreshBodyAttributes();
+                o.topSpeed *= zoneBulletSpeed;
+                o.damage *= zoneEffect.bulletDamage || 1;
+            }
+        }
         o.life();
         this.onShootFunction();
         this.recoilDir = this.body.facing + this.angle;

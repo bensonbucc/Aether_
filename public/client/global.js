@@ -63,6 +63,13 @@ function Clickable() {
             region.h = h * global.ratio;
             active = true;
         },
+        get: () => ({
+            x: region.x,
+            y: region.y,
+            w: region.w,
+            h: region.h,
+            active,
+        }),
         check: target => {
             let dx = Math.round(target.x - region.x);
             let dy = Math.round(target.y - region.y);
@@ -92,7 +99,8 @@ let Region = (size) => {
         hide: () => {
             for (let region of data) region.hide();
         },
-        check: x => data.findIndex(r => r.check(x))
+        check: x => data.findIndex(r => r.check(x)),
+        get: index => index >= 0 && index < data.length ? data[index].get() : null
     };
 };
 
@@ -320,6 +328,11 @@ const global = {
             active: false,
             color: "#000000"
         },
+        hauntedAsylum: {
+            active: false,
+            westDark: false,
+            eastDark: false
+        },
     },
     bandwidth: {
         currentHa: 0,
@@ -528,3 +541,6 @@ const global = {
     }
 };
 export { global };
+
+
+

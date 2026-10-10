@@ -11,5 +11,8 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "license": "MIT License"
+  "license": "MIT License",
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
 }

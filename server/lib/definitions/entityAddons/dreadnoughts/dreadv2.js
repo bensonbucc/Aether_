@@ -1249,7 +1249,7 @@ Class.appeaser_dreadsV2 = {
 				ASPECT: 1.8
 			},
 			PROPERTIES: {
-				SHOOT_SETTINGS: combineStats([g.basic, g.machineGun, g.twin, g.spam, {size: 0.7, health: 1.03, range: 0.75}]),
+                SHOOT_SETTINGS: combineStats([g.basic, g.machineGun, g.twin, g.spam, {size: 0.7, health: 1.03, range: 0.75}]),
 				TYPE: "bullet"
 			}
 		},

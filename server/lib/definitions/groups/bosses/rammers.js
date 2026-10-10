@@ -1,4 +1,4 @@
-const {makeMenu} = require('../../facilitators.js')
+﻿const {makeMenu} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 
 Class.ramMiniboss = {
@@ -20,7 +20,7 @@ Class.bob = {
     SIZE: 18,
     BODY: {
         SPEED: 2 * base.SPEED,
-        HEALTH: 5 * base.HEALTH,
+        HEALTH: 15 * base.HEALTH,
         DAMAGE: 5 * base.DAMAGE,
         REGEN: 8 * base.REGEN,
         FOV: 0.5 * base.FOV,
@@ -55,3 +55,4 @@ Class.nemesis = {
         FOV: 5,
     },
 }
+

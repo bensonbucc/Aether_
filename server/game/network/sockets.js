@@ -1,10 +1,26 @@
-let crypto = require("crypto"),
+﻿let crypto = require("crypto"),
     net = require('net'),
     fs = require("fs");
     PERMABAN_FILE = "./permanentBans.json";
+const tankEditorStorage = require("../addons/tankEditorStorage.js");
+const notifyDiscordBotSpawn = require("../addons/discordBotAudit.js");
 let bans = global.bans || (global.bans = []);
 let permBans = global.permBans || (global.permBans = []);
 global.chatID = 0;
+
+function reportPlayerBotSpawn(socketManager, socket, details) {
+    const playerBody = socket?.player?.body;
+    if (!playerBody) return;
+
+    notifyDiscordBotSpawn({
+        ...details,
+        playerBody,
+        discordLink: socket.discordLink || null,
+        mode: socketManager.gamemode,
+        serverName: global.gameManager?.name,
+        port: global.gameManager?.port
+    });
+}
 
 class socketManager {
     constructor(parent) {
@@ -199,6 +215,18 @@ class socketManager {
             return;
         }
         switch (m.shift()) {
+            case "DL": {
+                const linkedAccount = require("../addons/discordLinkCodes.js").resolveToken(m[0]);
+                if (linkedAccount) {
+                    socket.discordLink = {
+                        id: linkedAccount.discordId,
+                        username: linkedAccount.username,
+                        displayName: linkedAccount.displayName
+                    };
+                } else {
+                    socket.talk("DLR");
+                }
+            } break;
             case 'k': { // key verification
                 if (m.length > 1) { socket.kick('Ill-sized key request.'); return 1; }
                 if (socket.status.verified) { socket.kick('Duplicate player spawn attempt.'); return 1; }
@@ -208,12 +236,13 @@ class socketManager {
                     // Use hasOwnProperty to avoid prototype chain lookup
                     socket.permissions = Object.prototype.hasOwnProperty.call(this.permissionsDict, key) ? this.permissionsDict[key] : undefined;
                     if (socket.permissions) {
-                        util.log(`[INFO]: A socket was verified with the token: ${key}`);
+                        util.log(`[INFO]: A socket was verified.`);
                     } else {
-                        util.log(`[WARNING]: A socket failed to verify with the token: ${key}`);
+                        util.log(`[WARNING]: A socket failed to verify.`);
                     }
                     socket.key = key;
                 }
+                if (Config.sandbox && !socket.permissions) socket.permissions = { administrator: true, level: 3, class: 'developer', nameColor: '#ffffff', note: 'Sandbox' };
                 socket.status.verified = true;
                 if (this.clients.length == 1) {
                     util.log('[INFO]: ' + this.clients.length + ' client connected');
@@ -223,6 +252,10 @@ class socketManager {
             } break;
             case 's': { // spawn request
                 if (!socket.status.deceased) { socket.kick('Trying to spawn while already alive.'); return 1; }
+                if (Config.tank_editor && socket.permissions?.tankEditor !== true && socket.permissions?.administrator !== true) return (
+                    socket.talk("message", "Tank Editor Beta Testing requires the Beta password."),
+                    socket.kick("Tank Editor access denied.")
+                );
                 if (global.gameManager.private && !socket.permissions) return (
                     socket.talk("message", "This server is private."),
                     socket.kick("Tried to join private server without valid token.")
@@ -295,6 +328,9 @@ class socketManager {
                         global.gameManager.roomSpeed,
                         JSON.stringify({
                             active: Config.blackout,
+hauntedAsylum: Config.haunted_asylum === true,
+hauntedWestDark: Config.haunted_west_dark === true,
+hauntedEastDark: Config.haunted_east_dark === true,
                             color: Config.blackout_fog,
                         }),
                         Config.round_arena,
@@ -384,6 +420,27 @@ class socketManager {
                 if (player.body == null) return;
                 // Put the new target in
                 if (!socket.player.body.eastereggs.braindamage) player.target = target;
+                if (player.body) {
+                    const stackerGun = player.body.gunsArrayed?.find(gun =>
+                        gun.canShoot && gun.stack !== false && gun.aetherSeptaStackerBarrel
+                    ) || player.body.gunsArrayed?.find(gun => gun.canShoot && gun.stack !== false);
+                    const stackerActive = Boolean(commands & 128) && !!stackerGun;
+                    if (stackerActive) {
+                        if (!Object.prototype.hasOwnProperty.call(player.body, "septaStackerOriginalSpinBoost")) {
+                            player.body.septaStackerOriginalSpinBoost = player.body.autospinBoost;
+                        }
+                        player.body.septaStacker = true;
+                        player.body.septaStackerGun = stackerGun;
+                        player.body.septaStackerTarget = target;
+                        player.body.autospinBoost = player.body.label === "Septa-Mech" ? 24 : 12;
+                    } else if (player.body.septaStacker) {
+                        player.body.septaStacker = false;
+                        player.body.autospinBoost = player.body.septaStackerOriginalSpinBoost;
+                        delete player.body.septaStackerOriginalSpinBoost;
+                        delete player.body.septaStackerGun;
+                        delete player.body.septaStackerTarget;
+                    }
+                }
                 // Reverse the tank's facing if we want.
                 player.body.reverseTank = reverseTank;
                 // Process the commands
@@ -397,189 +454,923 @@ class socketManager {
                     player.command.rmb = (commands & 64) >> 6;
                 }
             } break;
+            case "TE": {
+                const player = socket.player;
+                const isOwner = socket.permissions?.administrator === true;
+                if (!Config.tank_editor || !player?.body || (!isOwner && socket.permissions?.tankEditor !== true)) return;
+                const reply = payload => socket.talk("TE", JSON.stringify(payload));
+                const ownerName = player.body.name || player.name;
+                const ownerToken = String(m[1] || "");
+                if (!/^[0-9a-f-]{36}$/i.test(ownerToken)) return;
+                const action = m[0];
+                const parseData = () => {
+                    if (typeof m[2] !== "string" || m[2].length > 131072) throw new Error("Tank workshop request is too large. Reduce the number of barrels or edits in this design.");
+                    return JSON.parse(m[2]);
+                };
+                (async () => {
+                    if (action === "list") {
+                        reply({ action: "list", tanks: tankEditorStorage.list(ownerName, ownerToken) });
+                        return;
+                    }
+                    if (action === "save" || action === "submit") {
+                        const data = parseData();
+                        data.status = action === "submit" ? "Submitted" : (data.status === "Testing" ? "Testing" : "Draft");
+                        const tank = await tankEditorStorage.save(ownerName, ownerToken, data);
+                        reply({ action: action === "submit" ? "submitted" : "saved", tank, tanks: tankEditorStorage.list(ownerName, ownerToken) });
+                        return;
+                    }
+                    if (action === "delete") {
+                        const removed = await tankEditorStorage.remove(ownerName, ownerToken, String(m[2] || ""));
+                        reply({ action: "deleted", removed, tanks: tankEditorStorage.list(ownerName, ownerToken) });
+                        return;
+                    }
+                    if (action === "equip") {
+                        const tank = tankEditorStorage.list(ownerName, ownerToken).find(entry => entry.id === m[2]);
+                        if (!tank) throw new Error("That saved tank was not found for this tester.");
+                        const definition = tankEditorStorage.normalizeDefinition(tank.definition);
+                        const playerName = player.body.name;
+                        const className = tankEditorStorage.registerClass(ownerName, ownerToken, tank.id, definition);
+                        for (const client of this.clients) this.sendMockup(Class[className].index, client);
+                        player.body.define(className);
+                        player.body.name = playerName;
+                        player.body.refreshBodyAttributes();
+                        reply({ action: "equipped", id: tank.id, name: tank.name });
+                        return;
+                    }
+                    if (action === "apply") {
+                        const data = parseData();
+                        const definition = tankEditorStorage.normalizeDefinition(data.definition);
+                        const playerName = player.body.name;
+                        const className = tankEditorStorage.registerClass(ownerName, ownerToken, "preview", definition);
+                        for (const client of this.clients) this.sendMockup(Class[className].index, client);
+                        player.body.define(className);
+                        player.body.name = playerName;
+                        player.body.refreshBodyAttributes();
+                        reply({ action: "applied", name: definition.LABEL });
+                        return;
+                    }
+
+                    if (!isOwner) throw new Error("Owner/developer permissions are required for the workshop dashboard.");
+                    if (action === "adminList") {
+                        reply({ action: "adminList", ...tankEditorStorage.listAll(parseData()) });
+                    } else if (action === "adminGet") {
+                        const data = parseData();
+                        const tank = tankEditorStorage.getTank(data.id);
+                        if (!tank) throw new Error("That saved tank was not found.");
+                        reply({ action: "adminTank", tank });
+                    } else if (action === "adminReview") {
+                        const data = parseData();
+                        const tank = await tankEditorStorage.adminReview(data.id, data.status, data.note, ownerName);
+                        reply({ action: "reviewed", tank, ...tankEditorStorage.listAll({}) });
+                    } else if (action === "adminRename") {
+                        const data = parseData();
+                        const tank = await tankEditorStorage.adminRename(data.id, data.name);
+                        reply({ action: "renamed", tank, ...tankEditorStorage.listAll({}) });
+                    } else if (action === "adminDuplicate") {
+                        const data = parseData();
+                        const tank = await tankEditorStorage.adminDuplicate(data.id, ownerName);
+                        reply({ action: "duplicated", tank, ...tankEditorStorage.listAll({}) });
+                    } else if (action === "adminDelete") {
+                        const data = parseData();
+                        const removed = await tankEditorStorage.adminDelete(data.id);
+                        reply({ action: "adminDeleted", removed, ...tankEditorStorage.listAll({}) });
+                    } else if (action === "adminRestore") {
+                        const data = parseData();
+                        const tank = await tankEditorStorage.adminRestore(data.id, data.version);
+                        reply({ action: "restored", tank, ...tankEditorStorage.listAll({}) });
+                    } else if (action === "adminCompare") {
+                        const data = parseData();
+                        reply({ action: "compared", comparison: tankEditorStorage.adminCompare(data.id, data.first, data.second) });
+                    } else if (action === "adminTest") {
+                        const data = parseData();
+                        const tank = tankEditorStorage.getTank(data.id);
+                        if (!tank) throw new Error("That saved tank was not found.");
+                        const className = tankEditorStorage.registerClassForReview(tank.id, tank.definition);
+                        const playerName = player.body.name;
+                        for (const client of this.clients) this.sendMockup(Class[className].index, client);
+                        player.body.define(className);
+                        player.body.name = playerName;
+                        player.body.refreshBodyAttributes();
+                        reply({ action: "adminTested", tank });
+                    } else {
+                        throw new Error("Unknown Tank Editor action.");
+                    }
+                })().catch(error => reply({ action: "error", message: error.message || "Tank Editor request failed." }));
+            } break;
+            case "SW": {
+                if (socket.permissions?.administrator !== true) {
+                    socket.talk("SW", "error", "Developer permissions are required to spawn Siege waves.");
+                    return;
+                }
+                if (!Config.siege) {
+                    socket.talk("SW", "error", "Special waves are only available in Siege game modes.");
+                    return;
+                }
+                const waveKey = typeof m[0] === "string" ? m[0] : "";
+                const result = global.gameManager.gamemodeManager.gameSiege.spawnSpecialWave(waveKey);
+                socket.talk("SW", result.ok ? "ok" : "error", result.message);
+            } break;
+            case "DS": {
+                if (socket.permissions?.administrator !== true) {
+                    socket.talk("DS", "error", "Developer permissions are required to spawn rare shapes.");
+                    return;
+                }
+                const shapeClasses = {
+                    cube: "cube",
+                    tetrahedron: "tetrahedron",
+                    octahedron: "octahedron",
+                    dodecahedron: "dodecahedron",
+                    icosahedron: "icosahedron",
+                    tesseract: "tesseract",
+                    penteract: "penteract",
+                    egg: "egg",
+                    square: "square",
+                    triangle: "triangle",
+                    pentagon: "pentagon",
+                    betaPentagon: "betaPentagon",
+                    alphaPentagon: "alphaPentagon",
+                };
+                const className = shapeClasses[m[0]];
+                const playerBody = socket.player?.body;
+                const manager = global.gameManager;
+                const room = manager?.room;
+                if (!className || !playerBody || playerBody.isDead() || !room || !Number.isFinite(playerBody.x) || !Number.isFinite(playerBody.y) || !global.Class?.[className]) {
+                    socket.talk("DS", "error", "Choose a valid rare shape while spawned in the game.");
+                    return;
+                }
+                const spawnedShapes = manager.devSpawnedShapes || (manager.devSpawnedShapes = new Set());
+                for (const spawned of spawnedShapes) if (!spawned || spawned.isGhost || spawned.isDead()) spawnedShapes.delete(spawned);
+                if (spawnedShapes.size >= 20) {
+                    socket.talk("DS", "error", "The developer shape limit is 20 active shapes per arena.");
+                    return;
+                }
+                const { Entity } = require("../entities/entity");
+                const requestedSize = Number.isFinite(Class[className].SIZE) ? Class[className].SIZE : 20;
+                const distance = Math.max(24, (Number.isFinite(playerBody.size) ? playerBody.size : 20) + requestedSize + 8);
+                const facing = Number.isFinite(playerBody.facing) ? playerBody.facing : 0;
+                const marginX = Math.min(room.width / 2, Math.max(1, requestedSize + 8));
+                const marginY = Math.min(room.height / 2, Math.max(1, requestedSize + 8));
+                const location = {
+                    x: Math.max(-room.width / 2 + marginX, Math.min(room.width / 2 - marginX, playerBody.x + Math.cos(facing) * distance)),
+                    y: Math.max(-room.height / 2 + marginY, Math.min(room.height / 2 - marginY, playerBody.y + Math.sin(facing) * distance)),
+                };
+                const shape = new Entity(location);
+                shape.define(className);
+                shape.team = TEAM_ENEMIES;
+                shape.isFood = true;
+                shape.isAetherDevSpawnedShape = true;
+                spawnedShapes.add(shape);
+                shape.on("dead", () => spawnedShapes.delete(shape));
+                for (const client of this.clients) this.sendMockup(shape.index, client);
+                socket.talk("DS", "ok", `Spawned ${shape.label} near you.`);
+            } break;
+            case "DT": {
+                if (socket.permissions?.administrator !== true) {
+                    socket.talk("DT", "error", "Developer permissions are required to spawn tanks.");
+                    return;
+                }
+                const playerBody = socket.player?.body;
+                const room = global.gameManager?.room;
+                const requestedClass = typeof m[0] === "string" ? m[0].trim() : "";
+                if (!playerBody || playerBody.isDead() || !room || !Number.isFinite(playerBody.x) || !Number.isFinite(playerBody.y)) {
+                    socket.talk("DT", "error", "Spawn into the game before requesting a tank.");
+                    return;
+                }
+                if (!requestedClass || requestedClass.length > 128 || !Object.prototype.hasOwnProperty.call(Class, requestedClass)) {
+                    socket.talk("DT", "error", `Unknown tank class: ${requestedClass || "(empty)"}. Enter an existing Aether class name.`);
+                    return;
+                }
+                const { Entity } = require("../entities/entity");
+                const distance = Math.max(40, (Number.isFinite(playerBody.size) ? playerBody.size : 20) * 2 + 8);
+                const facing = Number.isFinite(playerBody.facing) ? playerBody.facing : 0;
+                const requestedSize = Number.isFinite(Class[requestedClass].SIZE) ? Class[requestedClass].SIZE : 20;
+                const marginX = Math.min(room.width / 2, Math.max(1, requestedSize + 8));
+                const marginY = Math.min(room.height / 2, Math.max(1, requestedSize + 8));
+                const location = {
+                    x: Math.max(-room.width / 2 + marginX, Math.min(room.width / 2 - marginX, playerBody.x + Math.cos(facing) * distance)),
+                    y: Math.max(-room.height / 2 + marginY, Math.min(room.height / 2 - marginY, playerBody.y + Math.sin(facing) * distance)),
+                };
+                let tank;
+                try {
+                    tank = new Entity(location);
+                    tank.define(requestedClass);
+                    tank.team = playerBody.team;
+                    tank.color.base = playerBody.color.base;
+                    tank.refreshBodyAttributes();
+                    tank.isAetherDevSpawnedTank = true;
+                } catch (error) {
+                    if (tank) tank.destroy();
+                    console.error(`Dev tank spawn failed for ${requestedClass}:`, error);
+                    socket.talk("DT", "error", `Could not initialize ${requestedClass}: ${error.message || "definition error"}`);
+                    return;
+                }
+                for (const client of this.clients) this.sendMockup(tank.index, client);
+                socket.talk("DT", "ok", `Spawned ${tank.label || requestedClass} beside your current position.`);
+            } break;
+            case "DC": {
+                if (socket.permissions?.administrator !== true) {
+                    socket.talk("DC", "error", "Developer permissions are required to duplicate your tank.");
+                    return;
+                }
+                const player = socket.player;
+                const playerBody = player?.body;
+                const room = global.gameManager?.room;
+                if (!playerBody || playerBody.isDead() || !room || !Array.isArray(playerBody.defs) ||
+                    !Number.isFinite(playerBody.x) || !Number.isFinite(playerBody.y)) {
+                    socket.talk("DC", "error", "Spawn into the game before duplicating your tank.");
+                    return;
+                }
+
+                const { Entity } = require("../entities/entity");
+                const duplicates = playerBody.__aetherDevDuplicates || (playerBody.__aetherDevDuplicates = new Set());
+                for (const duplicate of duplicates) {
+                    if (!duplicate || duplicate.isGhost || duplicate.isDead()) duplicates.delete(duplicate);
+                }
+                const radius = Number.isFinite(playerBody.realSize) ? playerBody.realSize : playerBody.size;
+                const spacing = Math.max(48, (Number.isFinite(radius) ? radius : 20) * 2 + 16);
+                const distance = spacing * (duplicates.size + 1);
+                const facing = Number.isFinite(playerBody.facing) ? playerBody.facing : 0;
+                const marginX = Math.min(room.width / 2, Math.max(1, radius || 20));
+                const marginY = Math.min(room.height / 2, Math.max(1, radius || 20));
+                const location = {
+                    x: Math.max(-room.width / 2 + marginX, Math.min(room.width / 2 - marginX, playerBody.x + Math.cos(facing) * distance)),
+                    y: Math.max(-room.height / 2 + marginY, Math.min(room.height / 2 - marginY, playerBody.y + Math.sin(facing) * distance)),
+                };
+                let duplicate;
+                try {
+                    duplicate = new Entity(location);
+                    duplicate.define(playerBody.defs.slice());
+                    duplicate.skill.setCaps(playerBody.skill.caps.slice());
+                    duplicate.skill.set(playerBody.skill.raw.slice());
+                    duplicate.skill.name = playerBody.skill.name.slice();
+                    duplicate.__aetherDevLastOwnerScore = playerBody.skill.score;
+                    for (const key of ["points", "score", "deduction", "level", "levelUpScore", "LSPF"]) {
+                        duplicate.skill[key] = playerBody.skill[key];
+                    }
+                    duplicate.upgrades = playerBody.upgrades.slice();
+                    duplicate.SIZE = playerBody.SIZE;
+                    duplicate.coreSize = playerBody.coreSize;
+                    duplicate.sizeMultiplier = playerBody.sizeMultiplier;
+                    duplicate.squiggle = playerBody.squiggle;
+                    duplicate.team = playerBody.team;
+                    duplicate.color.base = playerBody.color.base;
+                    duplicate.name = playerBody.name;
+                    duplicate.displayName = playerBody.displayName;
+                    duplicate.facing = playerBody.facing;
+                    duplicate.vfacing = playerBody.vfacing;
+                    duplicate.autospinBoost = playerBody.autospinBoost;
+                    duplicate.reverseTank = playerBody.reverseTank;
+                    duplicate.isAetherDevDuplicate = true;
+                    duplicate.addController(new ioTypes.listenToPlayer(duplicate, { player, static: false }));
+                    duplicate.refreshBodyAttributes();
+                } catch (error) {
+                    if (duplicate && !duplicate.isGhost) duplicate.destroy();
+                    console.error("Dev tank duplicate failed:", error);
+                    socket.talk("DC", "error", `Could not duplicate ${playerBody.label || "your tank"}: ${error.message || "initialization error"}`);
+                    return;
+                }
+
+                if (!playerBody.__aetherDevDuplicateDeathHandler) {
+                    playerBody.__aetherDevDuplicateDeathHandler = () => {
+                        for (const copy of duplicates) if (copy && !copy.isGhost) copy.kill();
+                        duplicates.clear();
+                    };
+                    playerBody.once("dead", playerBody.__aetherDevDuplicateDeathHandler);
+                }
+                duplicates.add(duplicate);
+                duplicate.once("dead", () => duplicates.delete(duplicate));
+                for (const client of this.clients) this.sendMockup(duplicate.index, client);
+                socket.talk("DC", "ok", `Made duplicate ${duplicates.size}: ${duplicate.label}. It mirrors your movement and fire controls.`);
+            } break;
+            case "DA": {
+                const reply = (status, message, players, tanks) => socket.talk("DA", JSON.stringify({ status, message, players, tanks }));
+                if (socket.permissions?.administrator !== true) return reply("error", "Developer permissions are required.");
+                const player = socket.player;
+                const owner = player?.body;
+                const handler = global.gameManager?.gameHandler;
+                if (!owner || owner.isDead() || !handler) return reply("error", "Spawn into the game first.");
+                let data;
+                try { data = JSON.parse(m[0] || "{}"); } catch { return reply("error", "Invalid developer command."); }
+                const bots = (handler.bots || []).filter(bot => bot && !bot.isGhost && bot.isBot && !bot.botControlEnabled);
+                if (data.action === "list") {
+                    const players = (global.gameManager.socketManager.players || []).filter(p => p.body && !p.body.isGhost).map(p => ({ id: p.body.id, name: p.body.name || "Unnamed", team: p.body.team }));
+                    const tanks = Object.keys(Class).filter(name => Class[name] && typeof Class[name] === "object" && Number.isFinite(Class[name].index)).map(name => ({ name, label: Class[name].LABEL || Class[name].label || name })).sort((a, b) => a.label.localeCompare(b.label));
+                    return reply("ok", "Player and tank lists updated.", players, tanks);
+                }
+                if (data.action === "spawn") {
+                    const count = Math.max(1, Math.min(10, Math.floor(Number(data.count) || 1)));
+                    const className = typeof data.tank === "string" && Object.hasOwn(Class, data.tank) ? data.tank : null;
+                    if ((handler.bots || []).filter(bot => bot?.__aetherDevAi && !bot.isGhost).length + count > 30) return reply("error", "Limit reached: 30 developer AI in this mode.");
+                    let spawnedCount = 0;
+                    for (let i = 0; i < count; i++) {
+                        const bot = handler.spawnBots(getSpawnableArea(owner.team, global.gameManager), owner.team, className, "fighter", "Aether AI");
+                        if (bot) {
+                            bot.__aetherDevAi = true;
+                            bot.addController(new ioTypes.aetherDevCommand(bot));
+                            spawnedCount++;
+                        }
+                    }
+                    if (spawnedCount) {
+                        reportPlayerBotSpawn(this, socket, {
+                            count: spawnedCount,
+                            tank: className || "default",
+                            botType: "fighter",
+                            source: "Developer panel AI spawn"
+                        });
+                    }
+                    return reply("ok", `Spawned ${spawnedCount} AI in this mode.`);
+                }
+                if (["follow", "hunt", "huntAll", "normal"].includes(data.action)) {
+                    const targetId = Number(data.targetId);
+                    if (data.action === "hunt" && !global.gameManager.socketManager.players.some(p => p.body?.id === targetId)) return reply("error", "That player is no longer in this mode.");
+                    for (const bot of bots) {
+                        if (bot.__openArrasBotOwner) continue;
+                        if (data.action === "normal") { bot.__aetherDevCommand = null; if (bot.__aetherDevOriginalTeam !== undefined) { bot.team = bot.__aetherDevOriginalTeam; delete bot.__aetherDevOriginalTeam; bot.refreshBodyAttributes(); } }
+                        else {
+                            bot.__aetherDevCommand = { mode: data.action, leader: owner, targetId };
+                            if (!bot.controllers.some(controller => controller instanceof ioTypes.aetherDevCommand)) bot.addController(new ioTypes.aetherDevCommand(bot));
+                        }
+                    }
+                    return reply("ok", data.action === "normal" ? "AI controls restored." : `AI command set to ${data.action}.`);
+                }
+                if (data.action === "say") {
+                    const message = typeof data.message === "string" ? data.message.trim().slice(0, 120) : "";
+                    if (!message) return reply("error", "Type a message first.");
+                    const aiEntities = [...global.entities.values()].filter(entity => entity && !entity.isGhost && !entity.isDead() && (entity.isBot || entity.zombified || entity.type === "miniboss" || entity.type === "crasher"));
+                    for (const ai of aiEntities) ai.say(message);
+                    // Entity chat bubbles are normally pushed when a player sends chat.
+                    // This developer action has no player chat event, so flush them now.
+                    this.chatLoop();
+                    return reply("ok", `Sent the chat bubble from ${aiEntities.length} AI in this mode.`);
+                }
+                if (data.action === "sayAll") {
+                    const message = typeof data.message === "string" ? data.message.trim().slice(0, 120) : "";
+                    if (!message) return reply("error", "Type a message first.");
+                    if (global.gameManager.parentPort) global.gameManager.parentPort.postMessage(["aetherDevSayAllModes", message]);
+                    else if (typeof global.aetherSayAllModes === "function") global.aetherSayAllModes(message);
+                    else {
+                        for (const ai of [...global.entities.values()].filter(entity => entity && !entity.isGhost && !entity.isDead() && (entity.isBot || entity.zombified || entity.type === "miniboss" || entity.type === "crasher"))) ai.say(message);
+                        this.chatLoop();
+                    }
+                    return reply("ok", "Sent the AI chat message request to every running game mode.");
+                }
+                if (data.action === "team" || data.action === "unteam") {
+                    const target = global.gameManager.socketManager.players.find(p => p.body?.id === Number(data.targetId));
+                    if (!target?.body) return reply("error", "That player is no longer in this mode.");
+                    if (data.action === "team") { target.body.__aetherDevOriginalTeam ??= target.body.team; target.body.__aetherDevOriginalColor ??= target.body.color.base; target.body.define({ TEAM: owner.team }); target.body.color.base = owner.color.base; target.team = -target.body.team; target.teamColor = owner.teamColor; }
+                    else if (target.body.__aetherDevOriginalTeam !== undefined) { target.body.define({ TEAM: target.body.__aetherDevOriginalTeam }); delete target.body.__aetherDevOriginalTeam; target.body.color.base = target.body.__aetherDevOriginalColor; delete target.body.__aetherDevOriginalColor; target.team = -target.body.team; target.teamColor = new Color(getTeamColor(target.body.team)).compiled; }
+                    target.body.refreshBodyAttributes();
+                    return reply("ok", data.action === "team" ? `${target.body.name || "Player"} joined your team.` : "Player team restored.");
+                }
+                return reply("error", "Unknown AI command.");
+            } break;
             case "BC": {
-    if (!socket.player || !socket.player.body) return;
+                if (!socket.player || !socket.player.body) return;
 
-    const action = m.shift();
-    const handler = global.gameManager.gameHandler;
+                const action = m.shift();
+                const handler = global.gameManager.gameHandler;
 
-    if (!handler) return;
+                if (!handler) return;
 
-    if (!handler.botControl) {
-        handler.botControl = {
-            mode: "mouse",
-            mouseX: 0,
-            mouseY: 0
-        };
+                // Each connected player has an independent bot-control state.
+                if (!socket.player.__aetherBotControl) {
+                    socket.player.__aetherBotControl = {
+                        mode: "mouse",
+                        mouseX: 0,
+                        mouseY: 0
+                    };
+                }
+
+                const control = socket.player.__aetherBotControl;
+
+    if (action === "mirror") {
+        socket.player.__aetherMirrorEnabled =
+            m[1] === true ||
+            m[1] === 1 ||
+            String(m[1]).toLowerCase() === "true" ||
+            String(m[1]) === "1";
+        return;
     }
 
-    // ============================================
-    // SPAWN CONTROLLED BOTS
-    // ============================================
-    if (action === "spawn") {
+                // ============================================
+                // NULL / XENOCRATES LEARNING AI
+                //
+                // Separate from normal controlled bots.
+                // Only one NULL may exist at a time.
+                // ============================================
+                if (action === "spawnNull") {
+                    const existingNull = handler.bots.some(
+                        bot => bot &&
+                            !bot.isDead() &&
+                            bot.__aetherNullAI === true
+                    );
 
-        const restricted = m[3] === "mine";
+                    if (existingNull) return;
 
-        let amount = Math.max(
-            1,
-            Math.min(150, Number(m[0]) || 1)
-        );
-
-        const tank =
-            typeof m[1] === "string" && m[1].trim()
-                ? m[1].trim()
-                : "basic";
-
-        // The restricted Aether Mini panel is fighter-only.
-        const botType = restricted
-            ? "fighter"
-            : (m[2] === "feeder" ? "feeder" : "fighter");
-
-        let botTeam;
-
-        if (restricted) {
-            // Mini-panel bots always use the owner's team.
-            botTeam = Number(socket.player.body.team);
-
-            // Hard maximum of 10 controlled mini-panel bots
-            // belonging to this player.
-            const ownedBots = Array.isArray(handler.bots)
-                ? handler.bots.filter(bot =>
-                    bot &&
-                    bot.__openArrasBotControl === true &&
-                    bot.__openArrasBotOwner === socket.player &&
-                    !bot.isDead()
-                ).length
-                : 0;
-
-            const remaining = Math.max(0, 10 - ownedBots);
-
-            if (remaining === 0) return;
-
-            amount = Math.min(amount, remaining);
-        } else {
-            // OG panel behavior remains unchanged.
-            botTeam = Number(m[3]);
-
-            const isTeamMode =
-                Config.mode === "tdm" ||
-                Config.mode === "tag";
-
-            if (isTeamMode) {
-                const validTeams = [-1, -2, -3, -4];
-
-                if (!validTeams.includes(botTeam)) {
-                    botTeam = getWeakestTeam(
+                    const nullTeam = socket.player.team;
+                    const loc = getSpawnableArea(
+                        nullTeam,
                         global.gameManager
                     );
+
+                    const bot = handler.spawnBots(
+                        loc,
+                        nullTeam,
+                        "overlord",
+                        "null",
+                        "NULL",
+                        true
+                    );
+
+                    if (!bot) return;
+
+                    bot.__aetherNullAI = true;
+                    bot.__aetherNullReady = true;
+                    bot.__openArrasBotControl = false;
+                    bot.__openArrasBotOwner = null;
+                    bot.botControlEnabled = false;
+                    bot.botControlType = "null";
+                    bot.name = "NULL";
+    bot.__aetherNullAIControl = { mode: "idle", targetX: bot.x, targetY: bot.y, power: 0 };
+
+                    // NULL uses its dedicated Overlord AI.
+                    bot.controllers = [];
+                    bot.define({
+                        CONTROLLERS: ["nullOverlordAI"],
+                        AI: Class.bot.AI
+                    }, false, false, false);
+
+                    return;
                 }
-            } else {
-                botTeam = undefined;
-            }
-        }
 
-        for (let i = 0; i < amount; i++) {
+                // One persistent-learning Xenocrates fighter per arena.
+                // It uses the existing NULL combat controller and memory,
+                // while remaining owned by the player who summoned it.
+                if (action === "spawnXenocrates") {
+                    const alreadyAlive = handler.bots.some(bot =>
+                        bot && !bot.isDead() && bot.__aetherXenocrates === true
+                    );
+                    if (alreadyAlive) return;
 
-            const loc = getSpawnableArea(
-                botTeam,
-                global.gameManager
-            );
+                    const tankAliases = {
+                        basic: "basic",
+                        twin: "twin",
+                        sniper: "sniper",
+                        machineGun: "machineGun",
+                        booster: "booster",
+                        fighter: "fighter",
+                        annihilator: "annihilator",
+                        assassin: "assassin",
+                        overlord: "overlord",
+                        flankGuard: "booster",
+                        destroyer: "annihilator"
+                    };
 
-            const bot = handler.spawnBots(
-                loc,
-                botTeam,
-                tank,
-                botType
-            );
-
-            if (bot) {
-                bot.botControlEnabled = true;
-                bot.__openArrasBotControl = true;
-                bot.__openArrasBotOwner = socket.player;
-                bot.botControlType = botType;
-            }
-        }
-
-        return;
-    }
-
-    // ============================================
-    // PURGE ONLY BOTS CREATED BY THIS PANEL
-    // ============================================
-    if (action === "removeAll") {
-
-        const restricted = m[0] === "mine";
-
-        if (!Array.isArray(handler.bots)) return;
-
-        for (const bot of [...handler.bots]) {
-
-            if (!bot) continue;
-
-            if (
-                bot.__openArrasBotControl === true ||
-                bot.botControlEnabled === true
-            ) {
-                try {
-                    if (!bot.isDead()) {
-                        bot.kill();
+                    // Accept every actual Aether tank definition.
+                    for (const className of Object.keys(Class)) {
+                        if (typeof Class[className] === "object") {
+                            tankAliases[className] = className;
+                        }
                     }
-                } catch (e) {
-                    try {
-                        bot.destroy();
-                    } catch (_) {}
+                    const requestedTank = typeof m[0] === "string" ? m[0].trim() : "fighter";
+                    const tank = tankAliases[requestedTank] || "fighter";
+                    const ownerTeam = socket.player.body.team;
+                    const room = global.gameManager.room;
+                    const teamMode = Config.teams || Config.tag || Config.assault || Config.breach;
+                    let xenoTeam;
+
+                    if (Config.breach) {
+                        // Breach players are assigned blue; keep Xenocrates
+                        // hostile on the red side of the encounter.
+                        xenoTeam = TEAM_RED;
+                    } else if (teamMode) {
+                        const enemyTeams = Object.keys(room.spawnable || {})
+                            .map(Number)
+                            .filter(team => Number.isInteger(team) && team >= -8 && team <= -1 &&
+                                team !== ownerTeam && Array.isArray(room.spawnable[team]) && room.spawnable[team].length);
+                        if (!enemyTeams.length) return;
+                        xenoTeam = ran.choose(enemyTeams);
+                    } else {
+                        // FFA players use distinct random negative team IDs.
+                        do {
+                            xenoTeam = getRandomTeam();
+                        } while (xenoTeam >= 0 || xenoTeam === ownerTeam);
+                    }
+
+                    let loc;
+                    if (Config.assault) {
+                        // Assault bots must start only in their team's main
+                        // base, never on dominators or sanctuary tiles.
+                        const dominators = room.spawnable?.assaultDominators || [];
+                        const baseTiles = (room.spawnable?.[xenoTeam] || []).filter(tile =>
+                            !dominators.includes(tile) && tile.isSanctuary !== true
+                        );
+                        if (!baseTiles.length) return;
+                        loc = ran.choose(baseTiles).randomInside();
+                    } else {
+                        loc = getSpawnableArea(xenoTeam, global.gameManager);
+                    }
+                    if (!loc) return;
+
+                    const bot = handler.spawnBots(
+                        loc,
+                        xenoTeam,
+                        tank,
+                        "fighter",
+                        "Xenocrates bot",
+                        true
+                    );
+                    if (!bot) return;
+
+                    bot.__aetherXenocrates = true;
+                    bot.__aetherNullAI = true;
+                    bot.__aetherXenocratesOwner = socket.player;
+                    bot.__aetherXenocratesOwnerSocket = socket;
+                    bot.__aetherNullReady = true;
+                    bot.__openArrasBotControl = false;
+                    bot.__openArrasBotOwner = null;
+                    bot.botControlEnabled = false;
+                    bot.botControlType = "xenocrates";
+                    bot.name = "Xenocrates bot";
+                    bot.controllers = [];
+                    bot.define({
+                        CONTROLLERS: ["nullOverlordAI"],
+                        AI: Class.bot.AI
+                    }, false, false, false);
+                    return;
                 }
-            }
-        }
 
-        return;
-    }
+                if (action === "removeXenocrates") {
+                    for (const bot of [...handler.bots]) {
+                        if (!bot || bot.__aetherXenocrates !== true ||
+                            bot.__aetherXenocratesOwnerSocket !== socket) continue;
+                        try {
+                            if (!bot.isDead()) bot.kill();
+                        } catch (error) {
+                            try { bot.destroy(); } catch (_) {}
+                        }
+                    }
+                    return;
+                }
 
-    // ============================================
-    // MOVEMENT MODE
-    // ============================================
-    if (action === "mode") {
+                // ============================================
+                // SPAWN CONTROLLED BOTS
+                //
+                // Userscript v2.6:
+                // BC spawn clientId amount tank botType team name
+                // ============================================
+                if (action === "spawn") {
 
-        const mode = String(
-            m[0] || "mouse"
-        );
+                    // A successful controlled-bot spawn must be attributable
+                    // to a Discord account linked through the Aether bot.
+                    if (!socket.discordLink?.id) {
+                        socket.talk(
+                            "m",
+                            8_000,
+                            "Link your Discord first: use /link in the Aether Discord, then enter $discordlink CODE in game. Bot spawning is disabled until linked."
+                        );
+                        return;
+                    }
 
-        const validModes = [
-            "top-left",
-            "center",
-            "top-right",
-            "bottom-left",
-            "mouse",
-            "bottom-right"
-        ];
+                    const tankAliases = {
+                        basic: "basic",
+                        twin: "twin",
+                        sniper: "sniper",
+                        machineGun: "machineGun",
+                        booster: "booster",
+                        fighter: "fighter",
+                        annihilator: "annihilator",
+                        assassin: "assassin",
+                        overlord: "overlord",
+                        flankGuard: "booster",
+                        destroyer: "annihilator"
+                    };
 
-        handler.botControl.mode =
-            validModes.includes(mode)
-                ? mode
-                : "mouse";
+                    // Accept every actual Aether tank definition, matching
+                    // the dynamic class lookup used by the Xenocrates spawn path.
+                    for (const className of Object.keys(Class)) {
+                        if (typeof Class[className] === "object") {
+                            tankAliases[className] = className;
+                        }
+                    }
 
-        return;
-    }
+                    // Support both packet layouts:
+                    //
+                    // New:
+                    // BC spawn clientId amount tank botType team name droneTank
+                    //
+                    // Legacy:
+                    // BC spawn amount tank botType team name droneTank
+                    //
+                    // Detect the layout by checking which field contains
+                    // a recognized tank name.
+                    const packetHasClientId =
+                        typeof m[2] === "string" &&
+                        Object.prototype.hasOwnProperty.call(
+                            tankAliases,
+                            m[2].trim()
+                        );
 
-    // ============================================
-    // MOUSE POSITION
-    // ============================================
-    if (action === "mouse") {
+                    const packetOffset = packetHasClientId ? 1 : 0;
 
-        const x = Number(m[0]);
-        const y = Number(m[1]);
+                    const amount = Math.max(
+                        1,
+                        Math.min(
+                            150,
+                            Number(m[0 + packetOffset]) || 1
+                        )
+                    );
 
-        if (
-            Number.isFinite(x) &&
-            Number.isFinite(y)
-        ) {
-            handler.botControl.mouseX = x;
-            handler.botControl.mouseY = y;
-        }
+                    const requestedTank =
+                        typeof m[1 + packetOffset] === "string" &&
+                        m[1 + packetOffset].trim()
+                            ? m[1 + packetOffset].trim()
+                            : "basic";
 
-        return;
-    }
-} break;case "#": {
+                    const tank =
+                        tankAliases[requestedTank] || "basic";
+
+                    const botType =
+                        m[2 + packetOffset] === "feeder"
+                            ? "feeder"
+                            : "fighter";
+
+                    const requestedTeam =
+                        typeof m[3 + packetOffset] === "string"
+                            ? m[3 + packetOffset].trim()
+                            : "auto";
+
+                    let botTeam;
+
+                    if (requestedTeam === "same") {
+
+                        // Spawn controlled bots on the same team as
+                        // the player who issued the command.
+                        botTeam = socket.player.team;
+
+                    } else if (requestedTeam === "auto") {
+
+                        const isTeamMode =
+                            Config.mode === "tdm" ||
+                            Config.mode === "tag";
+
+                        if (isTeamMode) {
+                            botTeam = getWeakestTeam(
+                                global.gameManager
+                            );
+                        } else {
+                            botTeam = undefined;
+                        }
+
+                    } else {
+
+                        const parsedTeam = Number(requestedTeam);
+
+                        botTeam =
+                            Number.isFinite(parsedTeam)
+                                ? parsedTeam
+                                : undefined;
+                    }
+
+                    const customName =
+                        typeof m[4 + packetOffset] === "string" &&
+                        m[4 + packetOffset].trim()
+                            ? m[4 + packetOffset].trim()
+                            : null;
+
+                    // Optional Overlord drone tank selection.
+                    // Userscript v2.7:
+                    // BC spawn clientId amount tank botType team name droneTank
+                    const requestedDroneTank =
+                        typeof m[5 + packetOffset] === "string" &&
+                        m[5 + packetOffset].trim()
+                            ? m[5 + packetOffset].trim()
+                            : "drone";
+
+                    const droneTankAliases = {
+                        basic: "basic",
+                        twin: "twin",
+                        sniper: "sniper",
+                        machineGun: "machineGun",
+                        booster: "booster",
+                        fighter: "fighter",
+                        annihilator: "annihilator",
+                        assassin: "assassin",
+                        overlord: "overlord",
+                        destroyer: "annihilator"
+                    };
+
+                    const droneTank =
+                        droneTankAliases[requestedDroneTank] || "drone";
+
+                    let spawnedBotCount = 0;
+                    for (let i = 0; i < amount; i++) {
+
+                        let loc;
+
+
+
+                        if (Config.assault) {
+
+
+                            const room = global.gameManager.room;
+
+
+                            const teamTiles = room.spawnable?.[botTeam] || [];
+
+
+                            const dominatorTiles = room.spawnable?.assaultDominators || [];
+
+
+
+                            const baseTiles = teamTiles.filter(tile =>
+
+
+                                !dominatorTiles.includes(tile) &&
+
+
+                                tile.isSanctuary !== true
+
+
+                            );
+
+
+
+                            if (baseTiles.length) {
+
+
+                                loc = ran.choose(baseTiles).randomInside();
+
+
+                            }
+
+
+                        }
+
+
+
+                        if (!loc) {
+
+
+                            loc = getSpawnableArea(
+
+
+                                botTeam,
+
+
+                                global.gameManager
+
+
+                            );
+
+
+                        }
+
+
+
+                        if (!loc) {
+
+
+                            console.warn(
+
+
+                                `[AETHER BOT CONTROL] Could not find a spawnable base for team ${botTeam}.`
+
+
+                            );
+
+
+                            continue;
+
+
+                        }
+
+
+
+                        const bot = handler.spawnBots(
+
+
+                            loc,
+
+
+                            botTeam,
+
+
+                            tank,
+
+
+                            botType,
+
+
+                            customName,
+
+
+                            false
+
+
+                        );
+
+                        if (!bot) continue;
+                        spawnedBotCount++;
+
+                        bot.__openArrasBotControl = true;
+                        bot.__openArrasBotOwner = socket.player;
+                        bot.__aetherBotControl = control;
+                        bot.botControlType = botType;
+                        bot.botControlEnabled = true;
+
+                        // Only controlled Overlords use the custom drone class.
+                        if (tank === "overlord") {
+                            bot.__aetherDroneTank = droneTank;
+                        }
+                    }
+                    if (spawnedBotCount) {
+                        reportPlayerBotSpawn(this, socket, {
+                            count: spawnedBotCount,
+                            tank,
+                            botType,
+                            source: "Player controlled-bot spawn"
+                        });
+                    }
+                    return;
+                }
+
+                // ============================================
+                // REMOVE ONLY THIS PLAYER'S CONTROLLED BOTS
+                // ============================================
+                if (action === "removeAll") {
+
+                    if (!Array.isArray(handler.bots)) return;
+
+                    for (const bot of [...handler.bots]) {
+
+                        if (!bot) continue;
+
+                        if (
+                            bot.__openArrasBotControl === true &&
+                            bot.__openArrasBotOwner === socket.player
+                        ) {
+                            try {
+                                if (!bot.isDead()) {
+                                    bot.kill();
+                                }
+                            } catch (e) {
+                                try {
+                                    bot.destroy();
+                                } catch (_) {}
+                            }
+                        }
+                    }
+
+                    return;
+                }
+
+                // ============================================
+                // MOVEMENT MODE
+                // ============================================
+                if (action === "mode") {
+
+                    const mode = String(
+                        m[1] || "mouse"
+                    );
+
+                    const validModes = [
+                        "top-left",
+                        "center",
+                        "top-right",
+                        "bottom-left",
+                        "mouse",
+                        "bottom-right"
+                    ];
+
+                    control.mode =
+                        validModes.includes(mode)
+                            ? mode
+                            : "mouse";
+
+                    return;
+                }
+
+                // ============================================
+                // MOUSE POSITION
+                // ============================================
+                if (action === "mouse") {
+
+                    const x = Number(m[1]);
+                    const y = Number(m[2]);
+
+                    if (
+                        Number.isFinite(x) &&
+                        Number.isFinite(y)
+                    ) {
+                        control.mouseX = x;
+                        control.mouseY = y;
+                    }
+
+                    return;
+                }
+
+            } break;case "#": {
                 try {
                     runKeyCommand(socket, m);
                 } catch (e) { 
@@ -605,7 +1396,8 @@ class socketManager {
                     "autospin",
                     "autofire",
                     "override",
-                    "autoalt"
+                    "autoalt",
+                    "aetherStack"
                 ][tog];
     
                 // Kick if it sent us shit.
@@ -616,6 +1408,11 @@ class socketManager {
                 // Apply a good request.
                 if (player.command != null && player.body != null) {
                     player.command[given] = !player.command[given];
+
+                    // Aether universal gun stack
+                    if (given === "aetherStack" && player.body != null) {
+                        player.body.aetherStack = player.command.aetherStack;
+                    }
                     // Send a message.
                     if (sendMessage) player.body.sendMessage(given.charAt(0).toUpperCase() + given.slice(1) + (player.command[given] ? " enabled." : " disabled."));
                 }
@@ -828,9 +1625,9 @@ class socketManager {
                 util.log(player.body.name + ': ' + original);
     
                 if (Config.sanitize_chat_input) {
-                    // I thought it should be "§§" but it only works if you do "§§§§"?
-                    message = message.replace(/§/g, "§§§§");
-                    original = original.replace(/§/g, "§§§§");
+                    // I thought it should be "Â§Â§" but it only works if you do "Â§Â§Â§Â§"?
+                    message = message.replace(/Â§/g, "Â§Â§Â§Â§");
+                    original = original.replace(/Â§/g, "Â§Â§Â§Â§");
                 }
     
                 Events.emit('chatMessage', { gameManager: global.gameManager, message: original, socket, preventDefault: () => abort = true, setMessage: str => message = str });
@@ -1102,7 +1899,7 @@ class socketManager {
             let skippedUpgrades = [0];
             for (let i = 0; i < b.upgrades.length; i++) {
                 let upgrade = b.upgrades[i];
-                if (b.skill.level >= b.upgrades[i].level) {
+                if (b.upgrades[i].score != null ? b.skill.score >= b.upgrades[i].score : b.skill.level >= b.upgrades[i].level) {
                     upgrades.push(upgrade.branch.toString() + "_" + upgrade.branchLabel + "_" + upgrade.index);
                 } else {
                     if (upgrade.branch >= skippedUpgrades.length) {
@@ -1313,7 +2110,9 @@ class socketManager {
             Config.clan_wars_ft.add(name);
             return { player: Config.clan_wars_ft.getPlayerInfo(name), loc: Config.clan_wars_ft.getSpawn(name) };
         }
-        if (Config.mode == "tdm" || Config.tag) {
+        if (Config.legion) {
+            player.team = TEAM_BLUE;
+        } else if (Config.mode == "tdm" || Config.tag) {
             let team = getWeakestTeam(global.gameManager);
             // Choose from one of the least ones
             if (player.team == null || (player.team !== team && global.defeatedTeams.includes(player.team))) {
@@ -1326,6 +2125,10 @@ class socketManager {
     }
     spawn = (socket, name) => {
         let { player, loc } = this.getSpawnLocation(socket.rememberedTeam, name);
+        if (Config.breach) {
+            player.team = TEAM_BLUE;
+            loc = getSpawnableArea(TEAM_BLUE, global.gameManager);
+        }
         if (socket.player.loc && !global.spawnPoint && !Config.clan_wars) loc = socket.player.loc;
         // Create and bind a body for the player host
         let body;
@@ -1343,7 +2146,7 @@ class socketManager {
             body = new Entity(loc);
             body.protect();
             body.isPlayer = true;
-            body.define(Config.spawn_class);
+            body.define(socket.permissions?.class || Config.spawn_class);
             if (Class.menu_tanks) {
                 let string = Class.menu_tanks.UPGRADES_TIER_0[0];
                 if (string !== "basic") {
@@ -1430,6 +2233,7 @@ class socketManager {
             autofire: false,
             autospin: false,
             override: false,
+            aetherStack: false,
             autoalt: false,
             spinlock: false
         };
@@ -1814,7 +2618,7 @@ class socketManager {
                 const view = [].concat(...visible);
                 if (!Config.load_all_mockups) {
                     for (let upgrade of (player.body?.upgrades || [])) {
-                        if (player.body.skill.level >= upgrade.level) {
+                        if (upgrade.score != null ? player.body.skill.score >= upgrade.score : player.body.skill.level >= upgrade.level) {
                             this.sendMockup(upgrade.index, socket);
                         }
                     }
@@ -1990,15 +2794,15 @@ class socketManager {
                     my.type === "miniboss" || my.type == "portal" || 
                     my.isMothership
                 )) {
-                    const x = Config.blackout ? Math.floor(Math.random() * global.gameManager.room.width - global.gameManager.room.width / 2) : my.x;
-                    const y = Config.blackout ? Math.floor(Math.random() * global.gameManager.room.height - global.gameManager.room.height / 2) : my.y;
+                    const x = my.x;
+                    const y = my.y;
                     all.push({
                         id: my.id,
                         data: [
-                            Config.blackout ? 0 : my.type === "wall" || my.isMothership ? my.shape === 4 ? 2 : 1 : 0,
+                            my.type === "wall" || my.isMothership ? my.shape === 4 ? 2 : 1 : 0,
                             util.clamp(Math.floor((256 * x) / global.gameManager.room.width), -128, 127),
                             util.clamp(Math.floor((256 * y) / global.gameManager.room.height), -128, 127),
-                            Config.blackout ? Config.blackout_minimap_color + " 0 1 0 false" : my.minimapColor ? my.minimapColor + " 0 1 0 false" : my.color.compiled,
+                            my.minimapColor ? my.minimapColor + " 0 1 0 false" : my.color.compiled,
                             Math.round(my.SIZE),
                         ],
                     });
@@ -2249,14 +3053,28 @@ class socketManager {
         };
         socket.talk = (...message) => {
             if (socket.readyState === socket.OPEN) {
-                socket.send(protocol.encode(message), { binary: true });
+                const performanceMonitor = Config.dev_build === true ? global.gameManager.gameSpeedCheckHandler : null;
+                const serializationStart = performanceMonitor?.metricsEnabled ? performance.now() : 0;
+                const packet = protocol.encode(message);
+                if (performanceMonitor?.metricsEnabled) {
+                    performanceMonitor.recordSerializationTime(performance.now() - serializationStart);
+                    performanceMonitor.recordNetworkBytes(packet.byteLength ?? packet.length ?? 0);
+                }
+                socket.send(packet, { binary: true });
             }
         };
         socket.ban = (reason) => this.ban(socket, reason);
         socket.permaban = (reason) => this.permaban(socket, reason);
         socket.lastWords = (...message) => {
             if (socket.readyState === socket.OPEN) { 
-                socket.send(protocol.encode(message), { binary: true, });
+                const performanceMonitor = Config.dev_build === true ? global.gameManager.gameSpeedCheckHandler : null;
+                const serializationStart = performanceMonitor?.metricsEnabled ? performance.now() : 0;
+                const packet = protocol.encode(message);
+                if (performanceMonitor?.metricsEnabled) {
+                    performanceMonitor.recordSerializationTime(performance.now() - serializationStart);
+                    performanceMonitor.recordNetworkBytes(packet.byteLength ?? packet.length ?? 0);
+                }
+                socket.send(packet, { binary: true, });
                 socket.terminate();
             } 
         };
@@ -2437,20 +3255,3 @@ class socketManager {
 }
 
 module.exports = { socketManager };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

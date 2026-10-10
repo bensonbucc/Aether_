@@ -1,5 +1,15 @@
 let EventEmitter = require('events');
+const { trackEntityReference, untrackEntityReferences, referenceBits } = require('./referenceTracking.js');
 class turretEntity extends EventEmitter {
+    get master() { return this._master; }
+    set master(value) { trackEntityReference(this, "master", value); }
+    get source() { return this._source; }
+    set source(value) { trackEntityReference(this, "source", value); }
+    get parent() { return this._parent; }
+    set parent(value) { trackEntityReference(this, "parent", value); }
+    get parentID() { return this._parentID; }
+    set parentID(value) { trackEntityReference(this, "parentID", value); }
+
     constructor(position, bond, master) {
         super();
         if (!master) {
@@ -301,9 +311,11 @@ class turretEntity extends EventEmitter {
         }
         // Remove from parent lists if needed
         if (this.parent != null) util.remove(this.parent.children, this.parent.children.indexOf(this));
-        // Kill all of its children
-        for (const instance of entities.values()) {
-            if (instance.source.id === this.id) {
+        // Resolve references through the shared index instead of scanning the
+        // entire entity map for each turret destruction.
+        const dependents = global.entityReferenceIndex?.get(this.id);
+        if (dependents) for (const [instance, references] of dependents) {
+            if (references & referenceBits.source) {
                 if (instance.settings.persistsAfterDeath) {
                     instance.source = instance;
                 } else if (this.master.label !== "Bacteria") {
@@ -311,10 +323,10 @@ class turretEntity extends EventEmitter {
                     targetableEntities.delete(instance.id);
                 }
             }
-            if (instance.parent && instance.parent.id === this.id) {
+            if (references & referenceBits.parent) {
                 instance.parent = null;
             }
-            if (instance.master.id === this.id) {
+            if (references & referenceBits.master) {
                 if (this.master.label !== "Bacteria") {
                     instance.kill();
                     instance.master = instance;
@@ -322,6 +334,8 @@ class turretEntity extends EventEmitter {
                 }
             }
         };
+        global.entityReferenceIndex?.delete(this.id);
+        untrackEntityReferences(this);
         // Remove everything bound to it
         for (const turret of this.turrets.values()) {
             turret.destroy();

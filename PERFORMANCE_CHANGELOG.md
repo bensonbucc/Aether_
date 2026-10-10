@@ -1,0 +1,76 @@
+# Aether performance changelog
+
+## 2026-10-07 — Selfie hot-path allocation and Dev profiling
+
+**FILES:** `server/game/entities/entity.js`, `server/loaders/global.js`, `server/game/debug/speedLoop.js`, `server/game/network/sockets.js`, `benchmarks/entity-camera.js`, and `benchmarks/performance-monitor.js`.
+
+**WHAT WAS SLOW / UNKNOWN:** Active-entity selfie generation rebuilt arrays for guns, turrets, and props even when empty, sorted an empty combined list, recomputed `size` through the `realSize` getter, and concatenated child arrays. Controller time was only reported as one aggregate, so a 6.56 ms thought phase could not identify its expensive controller classes. The logger retained a per-measurement array of durations in the tick hot path.
+
+**WHAT CHANGED:** Reuse immutable empty camera arrays, skip empty collection conversions/sorts, compute size once, iterate child lists directly, and replace repeated `forceTwiggle` linear searches with a set. Preserve the empty goal object in place when a controller supplies no goal. In Dev builds, attribute thought time to controller class names, report top AI controllers and major phase timings, count projectiles, and time protocol encoding alongside bytes.
+
+**SAFETY / LIMITS:** Camera output equivalence is checked across empty and populated guns, turret/prop ordering, and connected child offsets. Controller and serializer timing is enabled only when `Config.dev_build` is true; normal gameplay gets no per-controller timing calls. Existing 4-level overload policy remains unchanged. None of these microbenchmarks is a full-match server benchmark.
+
+**HOW IT WAS TESTED:** Syntax checks passed for the four changed server JS files and the two changed performance harnesses. `node --expose-gc benchmarks/entity-camera.js` confirmed exact photo equality and the final paired medians at 100/200/500/750/1000 fixtures were 0.094→0.072, 0.160→0.139, 0.139→0.119, 0.143→0.077, and 0.150→0.080 ms per sweep. Timings varied between runs on this host, so these are directional microbenchmark results only. A scalar logger experiment was rejected and reverted after its paired benchmark ranged from 30.6% slower at 282 marks/sweep to 13.3% faster at 500 and effectively flat at 2500. `node benchmarks/performance-monitor.js` and `node benchmarks/adaptive-overload.js` passed. Existing bot targeting, spatial grid, and entity-destroy benchmarks were also run. Full live-match and multi-gamemode tests could not start because port 3000 was already bound by a process not visible to the sandbox's listener query; no process was terminated.
+
+## 2026-10-07 — AI target-list hot path
+
+**FILE:** `server/miscFiles/controllers.js`  
+**WHAT WAS SLOW:** `io_nearestDifferentMaster.buildList()` scanned every targetable entity and performed wall checks for potential targets. It then performed another wall check on each accepted candidate and created two additional filtered arrays.  
+**WHAT CHANGED:** Reuse the controller's existing `validTargets` array, apply the firing-arc rejection before wall checks, perform the wall check once per eligible candidate, and compact the list in place to retain farm/highest-danger targets. Target validation, target ordering, target-lock retention, and final candidates are preserved.  
+**WHY IT IS FASTER:** It eliminates a repeated wall-distance check and two array allocations for every target-selection scan. Work still scales O(bots × targetable entities); spatially bounding target scans remains a separate high-priority follow-up.  
+**WHAT COULD BE AFFECTED:** AI target selection and target-lock behavior. The candidate IDs and target-lock outcomes matched the pre-change implementation across mixed team, danger, health, visibility, type, firing-arc, and farming cases in the benchmark harness.  
+**HOW IT WAS TESTED:** `node --check server/miscFiles/controllers.js`; `node --check benchmarks/bot-targeting.js`; `node --expose-gc benchmarks/bot-targeting.js` on Node v24.19.0 / win32-x64. This isolated controller benchmark used 100, 200, 500, 750, and 1000 simulated controllers and the same number of targetable entities, with 2 warmup and 8 measured fleet scans. Candidate behavior matched. Average fleet-scan time improved by 33.3%, 30.9%, 26.0%, 20.8%, and 28.0% respectively in the recorded run. At 1000 × 1000, measured scan time was 46.77 ms before and 33.69 ms after; worst measured scan was 48.23 ms before and 36.04 ms after. Wall-distance checks fell from 20,000,000 to 10,000,000 over the measured 1000-bot workload. This excludes full entity life, physics, wall geometry, sockets, and other game workers; it is not a full-server bot-capacity claim.
+
+## 2026-10-07 — Grid cell-array reuse experiment (rejected)
+
+**FILE:** `server/lib/hashgrid.js`  
+**WHAT WAS SLOW:** `HashGrid.clear()` drops per-cell arrays, and the next rebuild allocates arrays for occupied cells.  
+**WHAT CHANGED:** Temporarily tested a bounded pool of recycled grid-cell arrays; the source was restored after comparison because the measured results did not justify the extra work. The pre-experiment source is retained as `server/lib/hashgrid.js.before-performance-grid-reuse`.  
+**WHY IT IS FASTER:** It was not faster in the same-process comparison. Average grid time changed by +6.1%, -3.4%, +2.8%, +7.3%, and +26.5% at 100, 200, 500, 750, and 1000 simulated bots (with six projectile entities per bot). The short benchmark also did not establish a useful GC reduction.  
+**WHAT COULD BE AFFECTED:** Hash-grid rebuild time and retained heap.  
+**HOW IT WAS TESTED:** `node --check server/lib/hashgrid.js`; `node --expose-gc benchmarks/spatial-grid.js`; then a 200-tick, same-process comparison of the saved baseline and experiment. The experiment was reverted and is not an active optimization.
+
+## 2026-10-07 — Per-tick AI target hash experiment (rejected)
+
+**FILE:** `server/lib/hashgrid.js`, `server/loaders/global.js`, `server/game/index.js`, and `server/miscFiles/controllers.js`  
+**WHAT WAS SLOW:** Autonomous bot target selection scans the targetable map for each bot decision.  
+**WHAT CHANGED:** Tested a second `HashGrid` index at coarser cell size, rebuilt from all targetable entities each tick, and queried by each bot. The experiment used the existing `HashGrid` class and retained full-scan fallback for wide/blind searches. The code was reverted after end-to-end microbenchmark comparison; `server/lib/hashgrid.js.before-spatial-ai-index` preserves the experiment baseline.  
+**WHY IT IS FASTER:** It was not faster after accounting for index rebuilds. With three rebuilds per fleet scan (the normal bot scan interval), average fleet scan time was 34.8%, 82.3%, 69.5%, and 50.8% slower at 200, 500, 750, and 1000 bots/targets. It was effectively even at 100. Fewer wall checks alone did not offset index construction and grid-query costs.  
+**WHAT COULD BE AFFECTED:** Target freshness, AI target ordering, and per-tick allocation. Candidate set equivalence passed after normalizing iteration order, but the performance regression ruled out shipping it.  
+**HOW IT WAS TESTED:** `node --check` on the grid, global loader, gameloop, and controller files; `node --expose-gc benchmarks/bot-targeting.js` with three index rebuilds included per measured fleet scan. The experiment is fully reverted.
+
+## 2026-10-07 — Performance telemetry and adaptive AI scan cadence
+
+**FILE:** `server/game/debug/speedLoop.js`, `server/game/index.js`, `server/game/network/sockets.js`, `server/game.js`, `server/server.js`, and `server/miscFiles/controllers.js`  
+**WHAT WAS SLOW:** The existing watchdog only emitted aggregate phase logs and could restart an overloaded game. It had no rolling tick distribution, per-thread CPU sample, event-loop-delay sample, bot/entity counts, GC observations, or outbound-byte rate, so there was not enough data to diagnose overload or recover gradually. Autonomous bot target scans remained at their normal cadence even when ticks were sustained beyond budget.  
+**WHAT CHANGED:** Added a 10-second tick sample window (average/worst/rate), development-only event-loop, heap/RSS, GC, and network-byte telemetry, plus entity/player/bot counts. `/api/performance` returns development-only per-server snapshots on the main server and local game-server ports. Added hysteretic overload levels based on sustained tick-budget pressure plus thread CPU or event-loop delay: level increases require three 1-second observations; recovery requires ten healthy observations and lowers one level at a time. Autonomous bots adjust only their target-list scan interval (3 normal, 4 degraded, 6 heavy, 9 critical ticks). Player control, controlled Bot Control tanks, entity life/physics, movement, and projectile collision cadence are unchanged.  
+**WHY IT IS FASTER:** Under sustained load, autonomous bots spend less time rebuilding target lists and checking walls. The earlier controller benchmark shows the unthrottled scan itself falls by 18–54% in paired runs after removing duplicate checks and allocations; this change reduces how often that scan runs as severity rises. Telemetry adds no intentional tick delay and allows operators to inspect whether adaptation activates and recovers.  
+**WHAT COULD BE AFFECTED:** Autonomous AI target reacquisition and target choice freshness under overload. Existing target locks are still validated each tick; only choosing/rebuilding the candidate list is less frequent. The overload thresholds and scan intervals are initial conservative controls, not values proven optimal by a full live-match capacity benchmark.  
+**HOW IT WAS TESTED:** Syntax checked all six changed JavaScript files. `node benchmarks/performance-monitor.js` passed and verified an 8 ms average tick, 30 tick/s, sample count, heap/RSS fields, and 1200 outbound bytes/s. `node benchmarks/adaptive-overload.js` passed: two short overload samples left state NORMAL; three sustained samples raised one level; escalation was one level at a time; intermediate load did not recover; ten healthy samples lowered one level at a time. `node --expose-gc benchmarks/bot-targeting.js` matched baseline candidate IDs and lock behavior, and paired fleet scans improved in two runs at all tested sizes. The current live game process was not restarted or loaded further; end-to-end tick, bandwidth, GC, overload, and recovery behavior remain unverified in a real match.
+
+## 2026-10-07 — Indexed entity-reference cleanup
+
+**FILE:** `server/game/entities/referenceTracking.js`, `server/game/entities/entity.js`, `server/game/entities/bulletEntity.js`, `server/game/entities/turretEntity.js`, `server/loaders/global.js`, and `server/game.js`  
+**WHAT WAS SLOW:** Each Entity, Bullet, or Turret destruction scanned the entire live entity map to find children and references through `source`, `parentID`, `parent`, and `master`. Repeated destruction therefore approached O(D × E), even when each destroyed object had few dependents.  
+**WHAT CHANGED:** Added one shared reverse-reference map and instrumented the four reference properties so assignments update the map. Destruction now visits only entities indexed as referring to the destroyed entity, while preserving each entity type's prior cleanup rules. Arena shutdown clears the index with the entity map. The active collision HashGrid remains the only spatial structure.  
+**WHY IT IS FASTER:** Cleanup work is now proportional to the destroyed entity's actual dependents instead of every live entity. In a synthetic test with 1,000 destructions, legacy cleanup increased from 201 ms for 1,000 entities to 16,764 ms for 20,000; indexed cleanup took 0.5–5.6 ms across those sizes.  
+**WHAT COULD BE AFFECTED:** Entity ownership, child lifetimes, persistent children, Bacteria exceptions, and targetable-entity cleanup. A behavior comparison covers those reference types, normal and Bacteria masters, and persistence. The index adds map entries as references are assigned; production memory cost has not yet been measured.  
+**HOW IT WAS TESTED:** `node --check` on all five changed JavaScript files and `node --expose-gc benchmarks/entity-destroy.js` on Node v24.19.0. Synthetic output reported `behaviorEquivalent: true`; timings are cleanup-only and are not full-server capacity measurements. The user-owned running multi-mode server was not restarted, so live runtime behavior remains unverified.
+
+## 2026-10-07 — Destroy regression and bot-count gate
+
+**FILE:** `server/game/entities/referenceTracking.js`, `server/game/entities/entity.js`, `server/game/entities/bulletEntity.js`, `server/game/debug/speedLoop.js`, `benchmarks/entity-destroy.js`, and `benchmarks/adaptive-overload.js`  
+**WHAT WAS SLOW / BROKEN:** The first index version also registered turret objects as dependents, although turrets are not in the entity map and do not implement `kill()`. Destroying a Siege boss with a turret reference could therefore throw and close the arena. The overload scan cadence could also activate for ordinary bot counts if CPU pressure was high.  
+**WHAT CHANGED:** Reference indexing now registers only dependents present in the live entity map, and entity/bullet constructors register their initial references after insertion. References from registered entities to unregistered turret targets remain indexed. Adaptive bot targeting now requires at least 100 autonomous bots in addition to sustained tick and CPU/event-loop pressure; below that count it resets to NORMAL. Controlled bots are excluded from this threshold.  
+**WHY IT IS FASTER / SAFER:** The index now models the same set of dependents as the old `entities.values()` scan, avoiding calls to `kill()` on turret objects. The bot-count gate prevents an overload state caused by ordinary populations such as 30 bots.  
+**WHAT COULD BE AFFECTED:** Destruction of tanks, bullets, turrets, and their children; overload response for bot-heavy matches.  
+**HOW IT WAS TESTED:** `node --check` on the modified source and benchmark files; `node --expose-gc benchmarks/entity-destroy.js` passed behavior equivalence for registered entity targets and unregistered turret targets; `node benchmarks/adaptive-overload.js` passed staged activation/recovery and confirmed that severe synthetic pressure at 30 bots does not activate throttling. Full Siege runtime smoke remains unverified because the currently running game process was not restarted.
+
+## Remaining work
+
+- Run the new `/api/performance` endpoint on a controlled instance and tune overload thresholds against real match data.
+- Run a controlled live-server smoke and memory profile for the new reverse-reference index; the synthetic benchmark does not measure production index memory overhead.
+- Measure player visibility and packet costs before adding spatial visibility queries or changing update frequency.
+- Revisit AI target spatial queries only with an incremental index or a measured break-even policy; a full per-tick grid rebuild is slower than the current scan at tested loads.
+- Run controlled end-to-end load scenarios (100–1000 bots where the existing spawn path permits) without launching a second full multi-mode server beside the already-running instance.
+- Confirm adaptive activation and recovery in-game; do not trade away player input, near combat, projectile collision, or controlled-bot responsiveness.

@@ -1,4 +1,4 @@
-const {combineStats, weaponArray, weaponMirror} = require('../facilitators.js')
+﻿const {combineStats, weaponArray, weaponMirror} = require('../facilitators.js')
 const g = require('../gunvals.js')
 
 // Bullets
@@ -652,9 +652,9 @@ Class.genericMinion = {
         FOV: 0.5,
         SPEED: 1.8,
         ACCELERATION: 1,
-        HEALTH: 5,
+        HEALTH: 4.5,
         SHIELD: 0,
-        DAMAGE: 1.2,
+        DAMAGE: 1.1,
         RESIST: 1,
         PENETRATION: 1,
         DENSITY: 0.4,
@@ -668,8 +668,8 @@ Class.genericMinion = {
     CONTROLLERS: [
         "nearestDifferentMaster",
         "mapAltToFire",
-        "minion",
         "canRepel",
+        "minion",
         "hangOutNearMaster",
     ]
 }
@@ -908,6 +908,58 @@ Class.unsetTrap = {
         SPEED: 1,
         DENSITY: 5,
     },
+}
+// A dedicated Septa-Mech projectile with a clipped triangular shell and a
+// center node, matching the shape visible in the reference clip.
+Class.septaMechTrap = {
+    PARENT: "genericEntity",
+    LABEL: "Septa Trap",
+    TYPE: "trap",
+    COLOR: -1,
+    SHAPE: [[0.96, 0], [0.76, 0.13], [-0.40, 0.84], [-0.56, 0.76], [-0.50, 0.55], [-0.22, 0], [-0.50, -0.55], [-0.56, -0.76], [-0.40, -0.84], [0.76, -0.13]],
+    MOTION_TYPE: "glide",
+    FACING_TYPE: "smoothWithMotion",
+    HITS_OWN_TYPE: "push",
+    DIE_AT_RANGE: true,
+    BODY: {
+        HEALTH: 0.5,
+        DAMAGE: 3,
+        RANGE: 450,
+        DENSITY: 2.5,
+        RESIST: 2.5,
+        SPEED: 0,
+    },
+    TURRETS: [
+        { POSITION: [2.8, 0, 0, 0, 360, 1], TYPE: "septaMechTrapCore" }
+    ]
+}
+Class.septaMechTrapCore = {
+    PARENT: "genericEntity",
+    LABEL: "",
+    SHAPE: 0,
+    // Match the firing player's team, just like the projectile shell.
+    COLOR: -1,
+    ACCEPTS_SCORE: false,
+    DRAW_HEALTH: false,
+    GUNS: []
+}
+Class.mechTrap = {
+    PARENT: "trap",
+
+    // Septa-Mech-specific movement/facing.
+    MOTION_TYPE: "glide",
+    FACING_TYPE: "smoothWithMotion",
+
+    BODY: {
+        SPEED: 0,
+    },
+
+    TURRETS: [
+        {
+            POSITION: [12, 0, 0, 0, 360, 1],
+            TYPE: "baseMechTurret"
+        }
+    ]
 }
 Class.assemblent = {
     PARENT: "setTrap",
@@ -1189,3 +1241,4 @@ Class.superSplitterBullet = {
         },
     ],
 }
+

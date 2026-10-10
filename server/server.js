@@ -5,6 +5,7 @@ console.log("Importing modules...\n");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
+const net = require("net");
 const url = require("url");
 const pjson = require('../package.json')
 
@@ -23,6 +24,9 @@ const environment = dotenv(envContent);
 for (const key in environment) {
     process.env[key] = environment[key];
 }
+
+// Start Discord account linking only when a private bot token is configured.
+require("./game/addons/discordBotLink.js").start();
 
 // Load all necessary modules and files via the loader
 const GLOBAL = require("./loaders/loader.js");
@@ -57,6 +61,23 @@ mimeSet = {
 
 let wsServer; // WebSocket server instance
 let server; // HTTP server instance
+const gameWorkers = [];
+let mainGameManager = null;
+
+const makeAllModeAIsSay = message => {
+    for (const ai of global.entities?.values?.() || []) {
+        if (ai && !ai.isGhost && !ai.isDead() && (ai.isBot || ai.zombified || ai.type === "miniboss" || ai.type === "crasher")) ai.say(message);
+    }
+    mainGameManager?.socketManager?.chatLoop();
+};
+global.aetherSayAllModes = message => {
+    const text = String(message || "").slice(0, 120);
+    if (!text) return;
+    for (const targetWorker of gameWorkers) {
+        try { targetWorker.postMessage(["aetherDevSayAllModes", text]); } catch (error) { console.warn("Could not relay AI chat to a game worker.", error.message); }
+    }
+    if (mainGameManager) makeAllModeAIsSay(text);
+};
 
 // Attempt to create a WebSocket server instance using the 'ws' package
 try {
@@ -105,6 +126,39 @@ server = http.createServer((req, res) => {
     }
     // Handle specific API endpoints based on the request URL
     switch (pathname) {
+        case "/api/beta-mode-access": {
+            ok = false;
+            if (req.method !== "POST") {
+                res.writeHead(405, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ authorized: false }));
+                return;
+            }
+            let body = "";
+            let tooLarge = false;
+            req.on("data", chunk => {
+                body += chunk;
+                if (body.length > 2048) tooLarge = true;
+            });
+            req.on("end", () => {
+                let suppliedKey = "";
+                try {
+                    suppliedKey = JSON.parse(body).key || "";
+                } catch {}
+                const betaKey = process.env.TANK_EDITOR_BETA_PASSWORD || "hurtsdabest";
+                const developerKey = process.env.DEVELOPER;
+                const validKey = !tooLarge && typeof suppliedKey === "string" && suppliedKey.length > 0;
+                const developerAuthorized = validKey && Boolean(developerKey) && suppliedKey === developerKey;
+                // Treat the developer credential as its own role even if it is
+                // accidentally configured to match the beta password.
+                const betaAuthorized = validKey && suppliedKey === betaKey && !developerAuthorized;
+                res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+                res.end(JSON.stringify({
+                    authorized: betaAuthorized,
+                    betaAuthorized,
+                    developerAuthorized,
+                }));
+            });
+        } break;
         case "/getServers.json": {
             // Serve a list of active servers (excluding hidden ones)
             readString = JSON.stringify(servers.filter((s) => s && !s.hidden).map((server) => ({
@@ -119,7 +173,23 @@ server = http.createServer((req, res) => {
                 serverhost: server.serverhost,
                 location: server.location,
                 gameMode: server.gameMode,
+                betaOnly: server.betaOnly === true,
             })));
+        } break;
+        case "/api/performance": {
+            ok = false;
+            if (Config.dev_build !== true) {
+                res.writeHead(404);
+                res.end("Not Found");
+                return;
+            }
+            res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            res.end(JSON.stringify(global.servers.filter(s => s && (s.performance || s.gameManager?.performanceState)).map(s => ({
+                id: s.id,
+                gameMode: s.gameMode,
+                location: s.location,
+                performance: s.performance || s.gameManager.performanceState,
+            }))));
         } break;
         case "/getTotalPlayers": {
             let countPlayers = 0;
@@ -254,6 +324,7 @@ function loadGameServer(loadViaMain = false, host, port, gamemode, region, serve
                 index,
             }
         });
+        gameWorkers.push(worker);
 
         // Listen for messages from the worker to update the server's status
         worker.on("message", message => {
@@ -267,10 +338,27 @@ function loadGameServer(loadViaMain = false, host, port, gamemode, region, serve
                     // Update: change the server's player count
                     global.servers[index].players = message.shift();
                     break;
+                case "mode":
+                    // Assault keeps one server entry while its arena changes between rounds.
+                    global.servers[index].gameMode = message.shift();
+                    global.servers[index].location = message.shift();
+                    break;
+                case "performance":
+                    if (global.servers[index]) global.servers[index].performance = message.shift();
+                    break;
                 case "doneLoading":
                     // Once loading is complete, trigger the server loaded callback
                     onServerLoaded();
                     break;
+                case "aetherDevSayAllModes": {
+                    const text = String(message.shift() || "").slice(0, 120);
+                    if (!text) break;
+                    for (const targetWorker of gameWorkers) {
+                        try { targetWorker.postMessage(["aetherDevSayAllModes", text]); } catch (error) { console.warn("Could not relay Aether AI chat to a game worker.", error.message); }
+                    }
+                    if (mainGameManager) makeAllModeAIsSay(text);
+                    break;
+                }
             }
         });
     } else {
@@ -281,7 +369,24 @@ function loadGameServer(loadViaMain = false, host, port, gamemode, region, serve
                 process.exit(1);
             }
             global.launchedOnMainServer = true;
-            new (require("./game.js").gameServer)(Config.host, Config.port, gamemode, region, serverHost, location, webProperties, properties, isFeatured, isUnlisted, isPrivate, false);
+
+            const mainGameServer = new (require("./game.js").gameServer)(
+                Config.host,
+                Config.port,
+                gamemode,
+                region,
+                serverHost,
+                location,
+                webProperties,
+                properties,
+                isFeatured,
+                isUnlisted,
+                isPrivate,
+                false
+            );
+            mainGameManager = global.gameManager;
+
+            global.servers[global.servers.length - 1] = mainGameServer.getInfo(true);
         }, 10)
     }
 }
@@ -327,35 +432,118 @@ server.listen(Config.port, () => {
     })
 });
 
-// Upgrade HTTP connections to WebSocket connections if applicable
+// Upgrade HTTP connections to WebSocket connections.
+// Public connections are routed to the selected local game server.
 server.on("upgrade", (req, socket, head) => {
+    console.log("[WS DEBUG] URL:", req.url);
+
+    const query = url.parse(req.url, true).query;
+    const requestedServer = query.server;
+
+    // Route connections when a server ID was supplied.
+    if (requestedServer) {
+        const targetConfig = Config.servers.find(
+            gameServer => gameServer.id === requestedServer
+        );
+
+        if (!targetConfig) {
+            console.warn("[WS DEBUG] Unknown server:", requestedServer);
+            socket.destroy();
+            return;
+        }
+
+        // The shared main-process server is handled directly.
+        if (targetConfig.share_client_server) {
+            wsServer.handleUpgrade(req, socket, head, (ws) => {
+                if (!global.launchedOnMainServer) {
+                    ws.close();
+                    return;
+                }
+
+                const mainServer = global.servers.find(
+                    gameServer => gameServer.loadedViaMainServer
+                );
+
+                if (mainServer && mainServer.gameManager) {
+                    mainServer.gameManager.socketManager.connect(ws, req);
+                    return;
+                }
+
+                ws.close();
+            });
+
+            return;
+        }
+
+        // Worker-based server:
+        // forward the WebSocket connection to its local port.
+        console.log(
+            `[WS DEBUG] Proxying ${requestedServer} -> 127.0.0.1:${targetConfig.port}`
+        );
+
+        const targetSocket = net.connect(
+            targetConfig.port,
+            "127.0.0.1",
+            () => {
+                let upgradeRequest =
+                    `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+
+                for (let i = 0; i < req.rawHeaders.length; i += 2) {
+                    upgradeRequest +=
+                        `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+                }
+
+                upgradeRequest += "\r\n";
+
+                targetSocket.write(upgradeRequest);
+
+                if (head && head.length) {
+                    targetSocket.write(head);
+                }
+
+                socket.pipe(targetSocket);
+                targetSocket.pipe(socket);
+            }
+        );
+
+        targetSocket.on("error", (err) => {
+            console.error(
+                `[WS DEBUG] Proxy error for ${requestedServer}:`,
+                err.message
+            );
+            socket.destroy();
+        });
+
+        socket.on("error", () => {
+            targetSocket.destroy();
+        });
+
+        socket.on("close", () => {
+            targetSocket.destroy();
+        });
+
+        return;
+    }
+
+    // Preserve normal behavior when there is no server ID.
     wsServer.handleUpgrade(req, socket, head, (ws) => {
         if (!global.launchedOnMainServer) {
             ws.close();
             return;
         }
 
-        console.log('[WS DEBUG] URL:', req.url);
-        const query = url.parse(req.url, true).query;
-        const requestedServer = query.server;
+        for (let i = 0; i < global.servers.length; i++) {
+            let gameServer = global.servers[i];
 
-        if (requestedServer) {
-            const target = global.servers.find(server => server.id === requestedServer);
-
-            if (target && target.gameManager) {
-                target.gameManager.socketManager.connect(ws, req);
+            if (gameServer.gameManager) {
+                gameServer.gameManager.socketManager.connect(ws, req);
                 return;
             }
         }
 
-        // Keep the normal behavior for local/direct connections.
-        for (let i = 0; i < global.servers.length; i++) {
-            let server = global.servers[i];
-            if (server.gameManager) server.gameManager.socketManager.connect(ws, req);
-        }
+        ws.close();
     });
 });
-
 // Set up a loop to periodically call Bun's garbage collector if available
 let bunLoop = setInterval(() => {
     try {
@@ -368,6 +556,9 @@ let bunLoop = setInterval(() => {
 
 // Log that the web server has been initialized if logging is enabled
 if (Config.startup_logs) console.log("Web Server initialized.");
+
+
+
 
 
 

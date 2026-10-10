@@ -1,4 +1,4 @@
-const {combineStats, makeAuto, makeTurret, weaponArray, weaponMirror} = require('../facilitators.js')
+﻿const {combineStats, makeAuto, makeTurret, weaponArray, weaponMirror} = require('../facilitators.js')
 const {base} = require('../constants.js')
 const g = require('../gunvals.js')
 
@@ -549,24 +549,51 @@ Class.crowbarTurret = makeTurret({
 Class.wrenchTurret = makeTurret({
     GUNS: [
         {
-            POSITION: [67, 6.5, 1, 0, 0, 0, 0],
-        }, {
-            POSITION: [5, 8.5, -1.5, 8, 0, 0, 0],
+            // Keep the barrel neutral gray and extend it past every auto turret.
+            POSITION: [108, 9, 1, 0, 0, 0, 0],
+            PROPERTIES: { COLOR: "grey" },
         },
     ],
     TURRETS: [
         {
-            POSITION: [6, 68, 0, 0, 360, 1],
-            TYPE: [ "autoTankGun", { GUN_STAT_SCALE: g.flankGuard, INDEPENDENT: true, HAS_NO_RECOIL: true } ],
+            POSITION: [7, 76, 0, 0, 360, 1],
+            TYPE: [
+                "autoTankGun",
+                {
+                    GUN_STAT_SCALE: g.flankGuard,
+                    INDEPENDENT: true,
+                    HAS_NO_RECOIL: true
+                }
+            ],
         }, {
-            POSITION: [6, 58, 0, 0, 360, 1],
-            TYPE: [ "autoTankGun", { GUN_STAT_SCALE: g.flankGuard, INDEPENDENT: true, HAS_NO_RECOIL: true } ],
+            POSITION: [6, 88, 0, 0, 360, 1],
+            TYPE: [
+                "autoTankGun",
+                {
+                    GUN_STAT_SCALE: g.flankGuard,
+                    INDEPENDENT: true,
+                    HAS_NO_RECOIL: true
+                }
+            ],
         }, {
-            POSITION: [6, 48, 0, 0, 360, 1],
-            TYPE: [ "autoTankGun", { GUN_STAT_SCALE: g.flankGuard, INDEPENDENT: true, HAS_NO_RECOIL: true } ],
+            POSITION: [6, 100, 0, 0, 360, 1],
+            TYPE: [
+                "autoTankGun",
+                {
+                    GUN_STAT_SCALE: g.flankGuard,
+                    INDEPENDENT: true,
+                    HAS_NO_RECOIL: true
+                }
+            ],
         },
     ],
-}, {canRepel: true, limitFov: true, extraStats: []})
+}, {
+    canRepel: true,
+    limitFov: true,
+    hasAI: false,
+    extraStats: [],
+    color: "mirror"
+})
 Class.protoSwarmerTurret = makeTurret({
     GUNS: [
         {
@@ -1818,3 +1845,5 @@ Class.hwEye = {
         },
     ]
 }
+
+

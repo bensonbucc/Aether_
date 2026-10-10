@@ -1,4 +1,4 @@
-let spawnPermanentBaseProtector = (loc, team) => {
+﻿let spawnPermanentBaseProtector = (loc, team) => {
     let o = new Entity(loc);
     o.define('baseProtector');
     o.team = team;
@@ -6,6 +6,7 @@ let spawnPermanentBaseProtector = (loc, team) => {
     o.on('dead', () => spawnPermanentBaseProtector(loc, team));
 },
 teamCheck = (tile, team) => {
+    if (Config.no_bases) return;
     for (let i = 0; i < tile.entities.length; i++) {
         let entity = tile.entities[i];
         if (entity.team !== team && !entity.ac && !entity.master.master.ac && !entity.isArenaCloser && !entity.master.master.isArenaCloser && !Config.disable_base_check) {
@@ -145,3 +146,4 @@ tileClass.baseprotected8 = new Tile({
     },
     TICK: tile => teamCheck(tile, TEAM_CYAN)
 })
+

@@ -45,8 +45,7 @@ html, body, .game {
 canvas {
 	width: 100%;
 	height: 100%;
-	image-rendering: optimizeSpeed;
-	image-rendering: pixelated;
+	image-rendering: auto;
 }
 
 .header {
@@ -216,6 +215,13 @@ input:disabled {
 	padding: 10px;
 	font-size: larger;
 	color: black;
+}
+#optName,
+#playerKeyInput {
+	-webkit-user-select: text;
+	-moz-user-select: text;
+	-ms-user-select: text;
+	user-select: text;
 }
 #optName::placeholder {
 	color: #ccc;

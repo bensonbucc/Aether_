@@ -6,6 +6,8 @@ import { color as colors } from "./color.js";
 import { gameDraw } from "./gameDraw.js";
 import { keybinderHandler } from "./keybindsHandler.js";
 import * as socketStuff from "./socketinit.js";
+import { initDevSiegeTools } from "./devSiegeTools.js";
+import { initDevTools } from "./devTools.js";
 
 (async function (util, global, config, Canvas, color, gameDraw, socketStuff, keybinderHandler) {
     let { socketInit, resync, gui, leaderboard, minimap, moveCompensation, lag, getNow } = socketStuff;
@@ -86,6 +88,8 @@ import * as socketStuff from "./socketinit.js";
     };
 
     window.onload = async () => {
+        initDevSiegeTools(global);
+        initDevTools(global);
         // Prepare the server selector
         global.serverMap = {};
         global.servers = [];
@@ -102,6 +106,26 @@ import * as socketStuff from "./socketinit.js";
         // Retrieve forms
         util.retrieveFromLocalStorage("optName");
         util.retrieveFromLocalStorage("playerKeyInput");
+        // Keep paste working in the two menu fields even though the page
+        // disables selection globally for the game canvas.
+        for (const inputId of ["optName", "playerKeyInput"]) {
+            const input = document.getElementById(inputId);
+            input?.addEventListener("paste", event => {
+                const clipboard = event.clipboardData;
+                if (!clipboard) return;
+                const pastedText = clipboard.getData("text/plain") || clipboard.getData("text");
+                if (typeof pastedText !== "string") return;
+
+                event.preventDefault();
+                const start = input.selectionStart ?? input.value.length;
+                const end = input.selectionEnd ?? input.value.length;
+                const remaining = input.maxLength >= 0
+                    ? Math.max(0, input.maxLength - (input.value.length - (end - start)))
+                    : pastedText.length;
+                input.setRangeText(pastedText.slice(0, remaining), start, end, "end");
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+            }, true);
+        }
         util.retrieveFromLocalStorage("optSharpEdges");
         util.retrieveFromLocalStorage("optSlowerFOV");
         util.retrieveFromLocalStorage("optPredictive");
@@ -360,7 +384,7 @@ import * as socketStuff from "./socketinit.js";
         // OSA info
         let i_div = document.createElement("div");
         i_div.classList.add("optionsHeader");
-        i_div.textContent = `Open Source Arras ${global.version}` + `${global.dev_build ? " (dev build)" : ""}`;
+        i_div.textContent = `Aether ${global.version}` + `${global.dev_build ? " (dev build)" : ""}`;
         mainDoc.appendChild(i_div);
 
         // Addon stuff
@@ -404,7 +428,7 @@ import * as socketStuff from "./socketinit.js";
                 authorValue.textContent += `${i !== 0 ? ", " : ""}${auth}`;
             }
             author.appendChild(authorValue);
-            targetVer.textContent = `Made for Open Source Arras ${e["osa-version"].target}`;
+            targetVer.textContent = `Made for Aether ${e["osa-version"].target}`;
 
             divDoc.appendChild(name);
             divDoc.appendChild(author);
@@ -807,6 +831,10 @@ import * as socketStuff from "./socketinit.js";
 
     // Prepare the player
     global.player = global.initPlayer();
+
+// Expose Aether client state for approved local scripts such as the
+// Universal Stacker. This does not expose anything outside this page.
+window.__AETHER_GLOBAL__ = global;
     function calculateTarget() {
         if (!global.canvas.mouseMoved) return;
         global.target.x = global.mouse.x - (global.player.screenx / global.screenWidth * global.canvas.width + global.canvas.width / 2);
@@ -1123,7 +1151,7 @@ import * as socketStuff from "./socketinit.js";
         global.GUIStatus.fullHDMode = document.getElementById("optFullHD").checked;
         global.GUIStatus.renderIngameOptions = document.getElementById("optAllowIngameOptions").checked;
         global.mobileStatus.enableCrosshair = document.getElementById("showCrosshair").checked;
-        global.mobileStatus.showJoysticks = document.getElementById("showJoystick").checked;
+        global.mobileStatus.showJoysticks = document.getElementById("showJoystick").checked || document.getElementById("optJoystickControls").checked;
         config.graphical.oldUIStyle = document.getElementById("optOldUiStyle").checked;
         // Game
         config.game.incognitoMode = document.getElementById("optIncognitoMode").checked;
@@ -1182,10 +1210,30 @@ import * as socketStuff from "./socketinit.js";
         global.refreshMonitorColoring(gameDraw);
     }
 
-    function startGame() {
+    async function startGame() {
         // Set flag
         if (global.gameLoading) return;
+        // Re-check the live field value here instead of depending on a debounced
+        // input event. Mobile keyboards/autofill do not consistently emit it.
         global.gameLoading = true;
+        let playerKeyInput = document.getElementById("playerKeyInput");
+        const currentKey = playerKeyInput?.value || "";
+        if (currentKey && global.verifyBetaModeAccess) {
+            global.betaModePending = true;
+            const authorization = await global.verifyBetaModeAccess(currentKey);
+            global.betaModeAuthorized = authorization.betaAuthorized;
+            global.developerModeAuthorized = authorization.developerAuthorized;
+            global.betaModePending = false;
+        } else {
+            global.betaModeAuthorized = false;
+            global.developerModeAuthorized = false;
+            global.betaModePending = false;
+        }
+        const selectedServer = global.servers?.find(server => server.id === location.hash.slice(1));
+        if (!global.betaModeAuthorized && !global.developerModeAuthorized && selectedServer?.betaOnly) {
+            const publicServer = global.servers?.find(server => !server.betaOnly);
+            if (publicServer) global.selectServerById?.(publicServer.id);
+        }
         if (global.mobile) {
             var d = document.body;
             d.requestFullscreen ? d.requestFullscreen()
@@ -1238,7 +1286,7 @@ import * as socketStuff from "./socketinit.js";
         global.optionsCheckboxes = undefined;
         // Other more important stuff
         let optName = document.getElementById("optName");
-        let playerKeyInput = document.getElementById("playerKeyInput");
+        playerKeyInput = document.getElementById("playerKeyInput");
         let autolevelUpInput = document.getElementById("autoLevelUp").checked;
         global.autolvlUp = autolevelUpInput;
         // Name and keys
@@ -2625,7 +2673,7 @@ import * as socketStuff from "./socketinit.js";
 
                     ctx[0].globalAlpha = 0.3;
                     if (tile.color == 'none') tile.color = 'border';
-                    let tileColor = gameDraw.getColor(tile.color, true);
+                    let tileColor = global.serverStats.serverGamemodeName === 'Ricochet' ? gameDraw.getColor('pureBlack', true) : gameDraw.getColor(tile.color, true);
                     // If not default tile color, draw that tile!
                     if (tileColor !== color.white) {
                         ctx[0].fillStyle = tileColor;
@@ -2633,6 +2681,35 @@ import * as socketStuff from "./socketinit.js";
                     }
                 }
             }
+        }
+        const zoneMap = window.__aetherZones;
+        if (global.serverStats.serverGamemodeName === "Aether Zones" && zoneMap?.cells?.length === 24 && global.roomSetup.length) {
+            const columns = 6, rows = 4;
+            ctx[0].save();
+            ctx[0].beginPath();
+            ctx[0].rect(roomX, roomY, roomWidth, roomHeight);
+            ctx[0].clip();
+            for (let row = 0; row < rows; row++) for (let col = 0; col < columns; col++) {
+                const cell = row * columns + col;
+                const effect = zoneMap.effects?.[zoneMap.cells[cell]];
+                if (!effect) continue;
+                const left = roomX + col * roomWidth / columns;
+                const top = roomY + row * roomHeight / rows;
+                ctx[0].globalAlpha = 0.035;
+                ctx[0].fillStyle = effect.color;
+                ctx[0].fillRect(left, top, roomWidth / columns, roomHeight / rows);
+                ctx[0].globalAlpha = 0.15;
+                ctx[0].strokeStyle = "#536276";
+                ctx[0].lineWidth = 1;
+                ctx[0].strokeRect(left, top, roomWidth / columns, roomHeight / rows);
+                ctx[0].globalAlpha = 0.34;
+                ctx[0].fillStyle = "#4c5361";
+                ctx[0].font = `${Math.max(9, Math.min(13, 11 * ratio))}px Ubuntu, sans-serif`;
+                ctx[0].textAlign = "center";
+                ctx[0].textBaseline = "middle";
+                ctx[0].fillText(effect.name, left + roomWidth / columns / 2, top + roomHeight / rows / 2, roomWidth / columns * 0.8);
+            }
+            ctx[0].restore();
         }
         if (global.advanced.roundArena || config.graphical.hexaGrid) {
             ctx[0].restore();
@@ -2676,7 +2753,12 @@ import * as socketStuff from "./socketinit.js";
     }
 
     function drawEntities(px, py, ratio, tick) {
-        if (global.advanced.blackout.active) {
+        const zoneMap = window.__aetherZones;
+        const haunted = global.advanced.hauntedAsylum;
+        const playerWorldX = global.player.loc?.x ?? global.player.cx.x;
+        const blackoutActive = global.advanced.blackout.active || (haunted.active && (playerWorldX < 0 ? haunted.westDark : haunted.eastDark));
+
+if (blackoutActive) {
             document.getElementById("gameCanvas-background").style.display = "none";
             ctx[1].drawImage(ctx[0].canvas, 0, 0, global.screenWidth, global.screenHeight);
             if (global.glCanvas) ctx[1].drawImage(global.glCanvas, 0, 0, global.screenWidth, global.screenHeight);
@@ -2720,7 +2802,7 @@ import * as socketStuff from "./socketinit.js";
                 !global.syncingWithTank &&
                 !instance.twiggle &&
                 !global.died ?
-                instance.render.f = Math.atan2(global.target.y * global.reverseTank, global.target.x * global.reverseTank) : 0
+                instance.render.f = Math.atan2(global.target.y * global.reverseTank, global.target.x * global.reverseTank) : 0;
 
             let x = ratio * instance.render.x - px,
                 y = ratio * instance.render.y - py,
@@ -2736,6 +2818,35 @@ import * as socketStuff from "./socketinit.js";
             y += global.screenHeight / 2;
             let alpha = instance.id === gui.playerid ? 1 : instance.alpha;
             alpha = handleScreenDistance(alpha, instance, false);
+            if (global.serverStats.serverGamemodeName === "Aether Zones" && instance.type === "tank" && zoneMap?.cells?.length === 24) {
+                const col = Math.max(0, Math.min(5, Math.floor((instance.render.x + global.gameWidth / 2) / global.gameWidth * 6)));
+                const row = Math.max(0, Math.min(3, Math.floor((instance.render.y + global.gameHeight / 2) / global.gameHeight * 4)));
+                const effect = zoneMap.effects?.[zoneMap.cells[row * 6 + col]];
+                if (effect?.name === "Echo") {
+                    const histories = window.__aetherEchoHistory || (window.__aetherEchoHistory = new Map());
+                    const now = performance.now();
+                    let history = histories.get(instance.id);
+                    if (!history) histories.set(instance.id, history = []);
+                    const latest = history[history.length - 1];
+                    if (!latest || now - latest.time >= 220) history.push({ x: instance.render.x, y: instance.render.y, facing: instance.render.f, time: now });
+                    while (history.length && now - history[0].time > 2200) history.shift();
+                    if (now - (window.__aetherEchoCleanupAt || 0) > 5000) {
+                        const activeIds = new Set(global.entities.map(entity => entity.id));
+                        for (const id of histories.keys()) if (!activeIds.has(id)) histories.delete(id);
+                        window.__aetherEchoCleanupAt = now;
+                    }
+                    for (let i = 0; i < history.length; i++) {
+                        const ghost = history[i];
+                        const age = now - ghost.time;
+                        if (age < 180 || age > 2200) continue;
+                        const fade = (1 - age / 2400) * 0.34;
+                        const ghostX = ratio * ghost.x - px + global.screenWidth / 2;
+                        const ghostY = ratio * ghost.y - py + global.screenHeight / 2;
+                        const ghostRender = { ...instance.render, x: ghost.x, y: ghost.y };
+                        drawEntity(baseColor, ghostX, ghostY, instance, ratio, fade, 1, 1, ghost.facing, false, false, false, ghostRender, isize);
+                    }
+                }
+            }
             drawEntity(baseColor, x, y, instance, ratio, instance.alpha * alpha, 1, 1, instance.render.f, false, false, false, instance.render, isize);
         }
         for (let instance of global.entities) {
@@ -2748,7 +2859,9 @@ import * as socketStuff from "./socketinit.js";
             drawChatMessages(x, false, py, instance, ratio, gui.visibleEntities ? 1 : alpha, instance.size, px, py);
             drawChatInput(x, y, instance, ratio, instance.size);
         }
-        if (global.advanced.blackout.active) {
+
+
+if (blackoutActive) {
             let entity = global.entities.find((u) => u.id === gui.playerid);
             if (entity) {
                 ctx[1].beginPath();
@@ -3208,7 +3321,7 @@ import * as socketStuff from "./socketinit.js";
         // Draw each message
         var Bd = Date.now();
         var yy = config.animationSettings.ScaleBar;
-        for (let i = global.messages.length - 1; i >= 0; i--) {
+        for (let i = global.messages.length - 1, shown = 0; i >= 0 && shown < 4; i--, shown++) {
             let msg = global.messages[i],
                 txt = msg.text,
                 time = Bd - msg.time,
@@ -3681,7 +3794,7 @@ import * as socketStuff from "./socketinit.js";
         let ping = global.metrics.latency.reduce((b, a) => b + a, 1) / global.metrics.latency.length - 1;
         let xloc = global.player.renderx / 30;
         let yloc = global.player.rendery / 30;
-        let watermarkText = "Open Source Arras";
+        let watermarkText = "Aether";
         let versionLength = (measureText(global.version ?? "v?", 32)) / 2;
         let length = Math.max(measureText(watermarkText, 32)) / 16;
         let gradientTransition = global.showDebug ? 4.1 : 2;
@@ -5413,4 +5526,18 @@ import * as socketStuff from "./socketinit.js";
         global.metrics.mspt = t - p;
     }
 })(util, global, config, Canvas, colors, gameDraw, socketStuff, keybinderHandler)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

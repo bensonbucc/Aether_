@@ -16,6 +16,9 @@ class gameHandler {
         this.naturallySpawnedBosses = [];
         this.bossTimer = 0;
         this.active = false;
+
+        // Persistent NULL AI memory.
+        this.nullMemory = new (require("./ai/nullMemory").NullMemory)();
     }
     checkUsers = () => global.gameManager.clients.length >= 1;
     // Collision stuff
@@ -130,6 +133,42 @@ class gameHandler {
                     if (!(this.auraCollideTypes.includes(instance.type))) return;
                 }
                 advancedcollide(instance, other, true, true);
+                const ricochetBullet = instance.type === "bullet" && instance.aetherRicochet
+                    ? instance
+                    : other.type === "bullet" && other.aetherRicochet ? other : null;
+                const ricochetTarget = ricochetBullet === instance ? other : instance;
+                if (ricochetBullet && ricochetTarget.type === "tank") {
+                    let normalX = ricochetBullet.x - ricochetTarget.x;
+                    let normalY = ricochetBullet.y - ricochetTarget.y;
+                    let normalLength = Math.hypot(normalX, normalY);
+                    if (normalLength < 0.001) {
+                        normalLength = Math.hypot(ricochetBullet.velocity.x, ricochetBullet.velocity.y) || 1;
+                        normalX = -ricochetBullet.velocity.x / normalLength;
+                        normalY = -ricochetBullet.velocity.y / normalLength;
+                    } else {
+                        normalX /= normalLength;
+                        normalY /= normalLength;
+                    }
+                    const velocity = ricochetBullet.velocity;
+                    const towardTarget = velocity.x * normalX + velocity.y * normalY;
+                    if (towardTarget < 0) {
+                        velocity.x -= 2 * towardTarget * normalX;
+                        velocity.y -= 2 * towardTarget * normalY;
+                    }
+                    const currentSpeed = Math.hypot(velocity.x, velocity.y);
+                    if (currentSpeed > 0) {
+                        const nextTopSpeed = Math.min(ricochetBullet.aetherRicochetBaseSpeed * 3, Math.max(ricochetBullet.topSpeed, ricochetBullet.aetherRicochetBaseSpeed) * 1.3);
+                        const boostedSpeed = Math.min(currentSpeed * 1.3, nextTopSpeed);
+                        ricochetBullet.velocity.x = velocity.x / currentSpeed * boostedSpeed;
+                        ricochetBullet.velocity.y = velocity.y / currentSpeed * boostedSpeed;
+                        ricochetBullet.topSpeed = nextTopSpeed;
+                        ricochetBullet.maxSpeed = nextTopSpeed;
+                    }
+                    ricochetBullet.x = ricochetTarget.x + normalX * (ricochetTarget.realSize + ricochetBullet.realSize + 2);
+                    ricochetBullet.y = ricochetTarget.y + normalY * (ricochetTarget.realSize + ricochetBullet.realSize + 2);
+                    ricochetBullet.damageReceived = 0;
+                    ricochetBullet.health.amount = ricochetBullet.health.max;
+                }
                 break;
             case instance.settings.hitsOwnType == "never" ||
                 other.settings.hitsOwnType == "never":
@@ -218,7 +257,7 @@ class gameHandler {
         grid.clear();
         for (const instance of entities.values()) {
             if (instance.contemplationOfMortality() === 1) {
-                if (Config.outbreak && !instance.zombified && (instance.isPlayer || instance.isBot)) {
+                if (Config.outbreak && !instance.zombified && !instance.isLamentisCursed && (instance.isPlayer || instance.isBot)) {
                     instance.zombified = true;
                     instance.settings.no_collisions = true;
                     instance.alpha = 0;
@@ -229,7 +268,7 @@ class gameHandler {
             }
 
             // Reset collision array once at the beginning
-            instance.collisionArray = [];
+            instance.collisionArray.length = 0;
 
             // Handle physics only if not bonded
             if (instance.bond == null) {
@@ -261,8 +300,21 @@ class gameHandler {
             for (const other of grid.query(instance.minX, instance.minY, instance.maxX, instance.maxY).values()) {
                 this.collide(instance, other);
             }
+            // A bullet/trap that hit a maze wall gets one collision pass so
+            // it can still hit a target occupying the wall area. Keep it alive
+            // briefly so the client can actually render the projectile.
+            if (instance.destroyAfterCollisionPass) {
+                if (Date.now() >= instance.wallHitVisualUntil) {
+                    instance.destroyAfterCollisionPass = false;
+                    instance.destroy();
+                    continue;
+                }
+
+                logs.collide.mark();
+                continue;
+            }
+
             if (instance.isInGrid) grid.insert(instance, instance.minX, instance.minY, instance.maxX, instance.maxY);
-            logs.collide.mark();
             if ((instance.touchingSizeWall === false || instance.collisionArray.length === 0) && instance.originalSize) {
                 instance.SIZE = instance.originalSize;
                 instance.originalSize = undefined;
@@ -434,21 +486,10 @@ class gameHandler {
             } else {
                 o.skillUp([ "atk", "hlt", "spd", "str", "pen", "dam", "rld", "mob", "rgn", "shi" ][ran.chooseChance(...Config.bot_skill_upgrade_chances)]);
                 o.refreshSkills();
-                if (o.leftoverUpgrades && o.upgrade(ran.irandomRange(0, o.upgrades.length))) {
+                if (!o.__openArrasBotControl && o.leftoverUpgrades && o.upgrade(ran.irandomRange(0, o.upgrades.length))) {
                     o.leftoverUpgrades--;
                 }
             }
-        }
-        // Add new bots if arena is open
-        if (!global.gameManager.arenaClosed && !global.cannotRespawn && this.bots.length < Config.bot_cap) {
-            let team = Config.mode === "tdm" || Config.mode === "tag" ? getWeakestTeam(global.gameManager) : undefined,
-            limit = 20, // give up after 20 attempts and just pick whatever is currently chosen
-            loc;
-            do {
-                loc = getSpawnableArea(team, global.gameManager);
-            } while (limit-- && dirtyCheck(loc, 50, global.gameManager))
-
-            this.spawnBots(loc, team);
         }
     }
 
@@ -566,8 +607,125 @@ class gameHandler {
         return bot;
     }
 
-   spawnBots(loc, team, tank = null, botType = "fighter") {
-    let botName = Config.bot_name_prefix + ran.chooseBotName();
+    autoSpawnBots = () => {
+
+        // Sandbox never gets automatic AI bots.
+
+        if (Config.sandbox) return;
+        if (Config.breach) return;
+        // Some servers disable ambient fighter bots while keeping their mode AI.
+        // Siege boss waves are managed separately and are not affected here.
+        if (Config.disable_auto_bots) return;
+        // Only run once for this game handler.
+        if (this.autoBotsSpawned) return;
+        this.autoBotsSpawned = true;
+
+        // Legion has one coordinated AI force: all automatic bots spawn red.
+        if (Config.legion) {
+            for (let i = 0; i < Config.bot_cap; i++) {
+                const loc = getSpawnableArea(TEAM_RED, global.gameManager);
+                const bot = this.spawnBots(loc, TEAM_RED, null, "fighter");
+                if (!bot) break;
+                bot.__aetherAutoBot = true;
+            }
+            return;
+        }
+
+        const teams = Number(Config.teams) || 0;
+
+        // FFA: 10 total AI.
+        if (!teams) {
+            for (let i = 0; i < 10; i++) {
+                const loc = getSpawnableArea(
+                    null,
+                    global.gameManager
+                );
+
+                const bot = this.spawnBots(
+                    loc,
+                    null,
+                    null,
+                    "fighter"
+                );
+                    if (bot) {
+                        bot.__aetherAutoBot = true;
+                    }
+
+
+                if (!bot) break;
+            }
+
+            return;
+        }
+
+        // Assault: 15 Blue bots + 15 Green bots.
+        if (Config.assault) {
+            const assaultTeams = [TEAM_BLUE, TEAM_GREEN];
+
+            for (const team of assaultTeams) {
+                for (let i = 0; i < 15; i++) {
+                    const room = global.gameManager.room;
+                    const teamTiles = room.spawnable?.[team] || [];
+                    const dominatorTiles = room.spawnable?.assaultDominators || [];
+
+                    const baseTiles = teamTiles.filter(tile =>
+                        !dominatorTiles.includes(tile)
+                    );
+
+                    const loc = baseTiles.length
+                        ? ran.choose(baseTiles).randomInside()
+                        : getSpawnableArea(team, global.gameManager);
+
+                    const bot = this.spawnBots(
+                        loc,
+                        team,
+                        null,
+                        "fighter"
+                    );
+                    if (bot) {
+                        bot.__aetherAutoBot = true;
+                    }
+
+
+                    if (!bot) break;
+                }
+            }
+
+            return;
+        }
+
+        // Other team modes: 15 AI on every configured team.
+        for (let team = -1; team >= -teams; team--) {
+            for (let i = 0; i < 15; i++) {
+                const loc = getSpawnableArea(
+                    team,
+                    global.gameManager
+                );
+
+                const bot = this.spawnBots(
+                    loc,
+                    team,
+                    null,
+                    "fighter"
+                );
+                    if (bot) {
+                        bot.__aetherAutoBot = true;
+                    }
+
+
+                if (!bot) break;
+            }
+        }
+    };
+   spawnBots(loc, team, tank = null, botType = "fighter", customName = null, elite = false) {
+    if (Config.legion) team = TEAM_RED;
+    const botControllers = Config.legion
+        ? ["nearestDifferentMaster", "mapTargetToGoal"]
+        : Class.bot.CONTROLLERS;
+    const botAISettings = Config.legion
+        ? { IGNORE_SHAPES: true, BLIND: true, SKYNET: true, CHASE: true, view360: true, seeInvisible: true }
+        : Class.bot.AI;
+    let botName = (typeof customName === "string" && customName.trim()) ? customName.trim() : "AC_130";
     let o = new Entity(loc);
 
     o.define(tank || Config.spawn_class);
@@ -575,7 +733,8 @@ class gameHandler {
     const controlled = tank !== null;
 
     o.define({
-        CONTROLLERS: controlled ? ["playerBotControl"] : Class.bot.CONTROLLERS,
+        CONTROLLERS: controlled ? ["playerBotControl"] : botControllers,
+        AI: botAISettings,
         MOTION_TYPE: controlled ? "motor" : undefined
     }, false, false, false);
 
@@ -586,10 +745,13 @@ class gameHandler {
     o.__openArrasBotOwner = null;
     o.name = botName;
     o.invuln = true;
+    o.__aetherBotWaitingForMovement = true;
 
     o.leftoverUpgrades = ran.chooseChance(...Config.bot_class_upgrade_chances);
 
-    let color = Config.random_body_colors
+    let color = Config.legion
+        ? getTeamColor(TEAM_RED)
+        : Config.random_body_colors
         ? Math.floor(Math.random() * 20)
         : team
             ? getTeamColor(team)
@@ -600,6 +762,58 @@ class gameHandler {
     o.minimapColor = color;
 
     o.skill.reset();
+
+    if (elite) {
+        o.__aetherEliteAI = true;
+        o.__aetherElitePreparing = true;
+        o.__aetherEliteReady = false;
+        o.invuln = true;
+
+        while (o.skill.level < Config.bot_start_level) {
+            o.skill.score += o.skill.levelScore;
+            o.skill.maintain();
+        }
+
+        const eliteBuild = [
+            "rld",
+            "atk",
+            "dam",
+            "pen",
+            "str",
+            "mob",
+            "spd",
+            "hlt",
+            "shi",
+            "rgn"
+        ];
+
+        let buildIndex = 0;
+
+        while (o.skill.points > 0) {
+            let upgraded = false;
+
+            for (let i = 0; i < eliteBuild.length; i++) {
+                const stat = eliteBuild[(buildIndex + i) % eliteBuild.length];
+
+                if (o.skill.amount(stat) < o.skill.cap(stat)) {
+                    if (o.skillUp(stat)) {
+                        buildIndex = (buildIndex + i + 1) % eliteBuild.length;
+                        upgraded = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!upgraded) break;
+        }
+
+        o.refreshBodyAttributes();
+        o.refreshSkills();
+        o.__aetherElitePreparing = false;
+        o.__aetherEliteReady = true;
+        o.invuln = false;
+    }
+
 
     let leveling = setInterval(() => {
         if (o.skill.level < Config.bot_start_level) {
@@ -629,16 +843,18 @@ class gameHandler {
             o.controllers = [];
 
             o.define({
-                CONTROLLERS: CC.CONTROLLERS
-                    ? [...Class.bot.CONTROLLERS, ...CC.CONTROLLERS]
-                    : Class.bot.CONTROLLERS,
+                CONTROLLERS: Config.legion
+                    ? botControllers
+                    : CC.CONTROLLERS
+                        ? [...botControllers, ...CC.CONTROLLERS]
+                        : botControllers,
                 FACING_TYPE: CC.FACING_TYPE
                     ? CC.FACING_TYPE
                     : Class.bot.FACING_TYPE,
-                AI: Class.bot.AI,
+                AI: botAISettings,
             }, false, true, false);
 
-            if (CC && CC.HEALING_TANK) {
+            if (CC && CC.HEALING_TANK && !Config.legion) {
                 o.controllers = [];
 
                 o.define({
@@ -664,7 +880,7 @@ class gameHandler {
             o.on("define", () => {
                 let CC = Class[o.defs[0]];
 
-                if (CC && CC.HEALING_TANK) {
+                if (CC && CC.HEALING_TANK && !Config.legion) {
                     o.controllers = [];
 
                     o.define({
@@ -679,7 +895,7 @@ class gameHandler {
                         FACING_TYPE: CC.FACING_TYPE
                             ? CC.FACING_TYPE
                             : Class.bot.FACING_TYPE,
-                        AI: Class.bot.AI,
+                        AI: botAISettings,
                     }, false, true, false);
                 }
 
@@ -687,7 +903,7 @@ class gameHandler {
                     FACING_TYPE: CC.FACING_TYPE
                         ? CC.FACING_TYPE
                         : Class.bot.FACING_TYPE,
-                    AI: Class.bot.AI,
+                    AI: botAISettings,
                 }, false, true, false);
             });
         }, 3000 + Math.floor(Math.random() * 7000));
@@ -699,25 +915,70 @@ class gameHandler {
         }, 3000 + Math.floor(Math.random() * 7000));
     }
 
-    o.on('dead', () => {
-        setTimeout(() => {
-            if (global.nextTagBotTeam) {
-                let loc = getSpawnableArea(
-                    global.nextTagBotTeam,
-                    global.gameManager
-                );
-                this.spawnBots(loc, global.nextTagBotTeam);
-            }
-        }, 10);
+    o.on('kill', (killData) => {
+        if (o.__aetherNullAI && killData?.entity) this.nullMemory.recordWin(killData.entity, o);
+    });
+
+    o.on('dead', (deathData) => {
+        // NULL learns from every death without restarting Aether.
+        if (o.__aetherNullAI === true) {
+            this.nullMemory.recordDeath(o, deathData);
+        }
+
+        const shouldRespawn = o.__aetherAutoBot === true;
+        const respawnTeam = o.team;
 
         util.remove(this.bots, this.bots.indexOf(o));
+
+        if (!shouldRespawn) return;
+
+        setTimeout(() => {
+            if (!this.active) return;
+
+            const room = global.gameManager.room;
+            const teamTiles = room.spawnable?.[respawnTeam] || [];
+            const dominatorTiles = room.spawnable?.assaultDominators || [];
+
+            const baseTiles = teamTiles.filter(tile =>
+                !dominatorTiles.includes(tile)
+            );
+
+            const loc = baseTiles.length
+                ? ran.choose(baseTiles).randomInside()
+                : getSpawnableArea(respawnTeam, global.gameManager);
+
+            const bot = this.spawnBots(
+                loc,
+                respawnTeam,
+                null,
+                "fighter"
+            );
+
+            if (bot) {
+                bot.__aetherAutoBot = true;
+            }
+        }, 1000);
     });
+
+    return o;
 };
 
     run() {
         this.active = true;
-        let gameLoop = setInterval(() => {
-            if (!this.active) return clearInterval(gameLoop);
+        this.autoBotsSpawned = false;
+
+        // Spawn normal AI for every new arena.
+        setTimeout(() => {
+            if (this.active && !global.gameManager.arenaClosed) {
+                this.autoSpawnBots();
+            }
+        }, 1000);
+        let gameLoop;
+        const runGameLoop = () => {
+            if (!this.active) return;
+
+            const tickStart = performance.now();
+
             if (this.checkUsers()) {
                 try {
                     this.gameloop();
@@ -728,9 +989,25 @@ class gameHandler {
                 } catch (e) {
                     global.gameManager.gameSpeedCheckHandler.onError(e);
                     this.stop();
+                    return;
                 };
             }
-        }, global.gameManager.room.cycleSpeed);
+
+            const tickEnd = performance.now();
+            const tickTime = tickEnd - tickStart;
+            global.gameManager.gameSpeedCheckHandler.recordTick(tickTime, tickEnd);
+            const targetDelay = Math.max(
+                0,
+                global.gameManager.room.cycleSpeed - tickTime
+            );
+
+            gameLoop = setTimeout(runGameLoop, targetDelay);
+        };
+
+        gameLoop = setTimeout(
+            runGameLoop,
+            global.gameManager.room.cycleSpeed
+        );
         let maintainloop = setInterval(() => {
             if (!this.active) return clearInterval(maintainloop);
             global.gameManager.gameSpeedCheckHandler.update();
@@ -741,7 +1018,7 @@ class gameHandler {
             if (!this.active) return clearInterval(otherloop);
             this.quickMaintainLoop();
             global.gameManager.socketManager.chatLoop();
-        }, 200)
+        }, 500)
         let healingLoop = setInterval(() => {
             if (!this.active) return clearInterval(healingLoop);
             this.regenHealthAndShield();
@@ -749,10 +1026,54 @@ class gameHandler {
     }
     stop() {
         this.active = false;
+
     }
 }
 
 module.exports = { gameHandler };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

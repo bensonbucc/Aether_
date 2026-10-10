@@ -1,4 +1,4 @@
-const { workerData } = require('worker_threads');
+﻿const { workerData } = require('worker_threads');
 
 const http = require("http");
 const ws = require("ws");
@@ -13,24 +13,33 @@ let { speedcheckloop } = require("./game/debug/speedLoop.js");
 let { gameHandler } = require("./game/index.js");
 let { gamemodeManager } = require("./game/gamemodeManager.js");
 
+const ASSAULT_VARIANTS = [
+    "assault_acropolis", "assault_booster", "assault_bunker", "assault_eye",
+    "assault_line", "assault_trenches", "assault_yinyang",
+];
+
 // Gamemode names
 const getName = (name, gamemodeData) => {
     const nameMap = { // commented-out gamemodes haven't been implemented yet
 
     // FFA
         ffa: "FFA",
-        halloween: "Halloween",
+        aether_zones: "Aether Zones",
+        halloween: "Haunted Asylum",
 
     // Squads
         clan_wars: "Clan Wars",
         duos: "Duos",
         squads: "Squads",
-        train_wars: "Train Wars",
         trios: "Trios",
 
     // TDM
         tdm: `${gamemodeData.teams}TDM`,
             open_tdm: `Open ${gamemodeData.teams}TDM`,
+        ultra_growth: "Ultra Growth",
+        ultra_growth_space: "Ultra Growth Space",
+        the_oval_arena: "The Oval Arena",
+        open_maze: "Open Maze",
         tetromino: `${gamemodeData.teams} Team Tetromino`,
 
     // Minigames
@@ -57,9 +66,13 @@ const getName = (name, gamemodeData) => {
 
     // Sandbox
         sandbox: "Sandbox",
+    normal_sandbox: "Sandbox",
+    tank_editor: "Tank Editor",
+    legion: "Legion",
 
     // Lobbies
-        //forge: "Forge",
+        forge: "Forge",
+        open_old_dreads: "Open Old Dreads",
             //old_forge: "Old Forge",
         limbo: "Limbo",
         nexus: "Nexus",
@@ -74,6 +87,7 @@ const getName = (name, gamemodeData) => {
         diep: "Diep",
         //dreadnoughts: "Dreadnoughts",
             old_dreadnoughts: "Old Dreadnoughts",
+            labyrinth: "Old Dreads",
         fast: "Fast",
         growth: "Growth",
             //old_growth: "Old Growth",
@@ -82,6 +96,7 @@ const getName = (name, gamemodeData) => {
         //manhunt: "Manhunt",
         march_madness: "March Madness",
         maze: "Maze",
+        ricochet: "Ricochet",
             //labyrinth: "Labyrinth",
                 //old_labyrinth: "Old Labyrinth",
             //magic_maze: "Magic Maze",
@@ -113,6 +128,19 @@ class gameServer {
         this.location = location;
         this.webProperties = webProperties;
         this.serverProperties = serverProperties;
+        this.assaultRotation = Array.isArray(serverProperties.assault_rotation)
+            ? [...new Set(serverProperties.assault_rotation.filter(variant => ASSAULT_VARIANTS.includes(variant)))]
+            : [];
+        this.assaultVariant = null;
+        this.assaultConfigDefaults = {};
+        this.assaultConfigKeys = new Set();
+        for (const variant of ASSAULT_VARIANTS) {
+            const mode = require(`./game/gamemodes/config/${variant}.js`);
+            for (const key of Object.keys(mode)) {
+                this.assaultConfigKeys.add(key);
+                if (!Object.prototype.hasOwnProperty.call(this.assaultConfigDefaults, key)) this.assaultConfigDefaults[key] = Config[key];
+            }
+        }
         this.name = "Unknown";
         this.featured = isfeatured;
         this.unlisted = isUnlisted;
@@ -152,6 +180,15 @@ class gameServer {
 
         // Make it public
         global.gameManager = this;
+        if (this.parentPort) this.parentPort.on("message", message => {
+            if (!Array.isArray(message) || message[0] !== "aetherDevSayAllModes") return;
+            const text = typeof message[1] === "string" ? message[1].slice(0, 120) : "";
+            if (!text) return;
+            for (const ai of global.entities.values()) {
+                if (ai && !ai.isGhost && !ai.isDead() && (ai.isBot || ai.zombified || ai.type === "miniboss" || ai.type === "crasher")) ai.say(text);
+            }
+            global.gameManager.socketManager.chatLoop();
+        });
 
         // Don't forget to bind our manager!
         this.gamemodeManager = new gamemodeManager(this);
@@ -176,6 +213,7 @@ class gameServer {
             serverhost: this.serverhost,
             location: this.location,
             gameMode: this.name,
+            betaOnly: this.serverProperties.betaOnly === true,
             gameManager: includegameManager ? this : false,
         }
     }
@@ -191,6 +229,15 @@ class gameServer {
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
             const { pathname, query } = url.parse(req.url, true);
             switch (pathname) {
+                case "/api/performance": {
+                    if (Config.dev_build !== true) {
+                        res.writeHead(404);
+                        res.end("Not Found");
+                        return;
+                    }
+                    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+                    res.end(JSON.stringify(this.performanceState || this.gameSpeedCheckHandler.getPerformanceState()));
+                } break;
                 case "/api/sendPlayer": {
                     if (query.api_key !== process.env.API_KEY) {
                         res.writeHead(403);
@@ -215,7 +262,429 @@ class gameServer {
                         }
                     });
                 } break;
-                case "/portalPermission": {
+                case "/api/hurts-bots": {
+    const sendJson = (status, data) => {
+        res.writeHead(status, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+        });
+        res.end(JSON.stringify(data));
+    };
+
+    if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+        });
+        res.end();
+        return;
+    }
+
+
+    const handler = this.gameHandler;
+    const room = this.room;
+
+    if (!handler) {
+        sendJson(503, {
+            ok: false,
+            error: "Game handler unavailable"
+        });
+        return;
+    }
+
+    if (!handler.hurtsBotsControl) {
+        handler.hurtsBotsControl = {
+            mode: "mouse",
+            mouseX: 0,
+            mouseY: 0,
+            followPlayerId: null,
+            followPlayerName: "",
+            mousePlayerId: null,
+            mousePlayerName: ""
+        };
+    }
+
+    const hurtsBots = () => {
+        return Array.isArray(handler.bots)
+            ? handler.bots.filter(bot =>
+                bot &&
+                bot.__hurtsBots === true &&
+                !bot.isDead()
+            )
+            : [];
+    };
+
+    const getPlayers = () => {
+        const clients = Array.isArray(this.socketManager?.clients)
+            ? this.socketManager.clients
+            : [];
+
+        return clients
+            .map(socket => {
+                const body =
+                    socket &&
+                    socket.player &&
+                    socket.player.body;
+
+                if (!body || body.isDead?.()) return null;
+
+                return {
+                    id: body.id,
+                    name: String(body.name || ""),
+                    team: Number(body.team),
+                    x: Number(body.x) || 0,
+                    y: Number(body.y) || 0
+                };
+            })
+            .filter(Boolean);
+    };
+
+    if (req.method === "GET") {
+        sendJson(200, {
+            ok: true,
+            bots: hurtsBots().length,
+            limit: 10,
+            mode: handler.hurtsBotsControl.mode,
+            room: {
+                width: Number(room?.width) || 0,
+                height: Number(room?.height) || 0,
+                center: room?.center || null
+            },
+            players: getPlayers()
+        });
+        return;
+    }
+
+    if (req.method !== "POST") {
+        sendJson(405, {
+            ok: false,
+            error: "POST required"
+        });
+        return;
+    }
+
+    let bodyText = "";
+
+    req.on("data", chunk => {
+        bodyText += chunk;
+        if (bodyText.length > 100000) {
+            req.destroy();
+        }
+    });
+
+    req.on("end", () => {
+        let json;
+
+        try {
+            json = JSON.parse(bodyText);
+        } catch {
+            sendJson(400, {
+                ok: false,
+                error: "Invalid JSON body"
+            });
+            return;
+        }
+
+        if (!json || typeof json !== "object") {
+            sendJson(400, {
+                ok: false,
+                error: "Invalid JSON body"
+            });
+            return;
+        }
+
+        const action = String(json.action || "").trim();
+
+        if (action === "status") {
+            sendJson(200, {
+                ok: true,
+                bots: hurtsBots().length,
+                limit: 10,
+                mode: handler.hurtsBotsControl.mode,
+                players: getPlayers()
+            });
+            return;
+        }
+
+        if (action === "spawn") {
+            const current = hurtsBots().length;
+
+            if (current >= 10) {
+                sendJson(409, {
+                    ok: false,
+                    error: "Hurts Bots limit reached",
+                    bots: current,
+                    limit: 10
+                });
+                return;
+            }
+
+            let amount = Math.floor(Number(json.amount) || 1);
+            amount = Math.max(1, Math.min(10 - current, amount));
+
+            const tank =
+                typeof json.tank === "string" &&
+                json.tank.trim()
+                    ? json.tank.trim()
+                    : "basic";
+
+            const botType =
+                json.botType === "feeder"
+                    ? "feeder"
+                    : "fighter";
+
+            let team;
+
+            if (
+                json.team !== undefined &&
+                json.team !== null &&
+                String(json.team).trim() !== "" &&
+                String(json.team).toLowerCase() !== "auto"
+            ) {
+                const requestedTeam = Number(json.team);
+
+                if ([-1, -2, -3, -4].includes(requestedTeam)) {
+                    team = requestedTeam;
+                }
+            }
+
+            if (
+                team === undefined &&
+                (
+                    Config.mode === "tdm" ||
+                    Config.mode === "tag"
+                )
+            ) {
+                const players = getPlayers();
+
+                if (players.length > 0) {
+                    team = players[0].team;
+                }
+            }
+
+            const customName =
+                typeof json.name === "string"
+                    ? json.name.trim().slice(0, 32)
+                    : "";
+
+            let spawned = 0;
+
+            for (let i = 0; i < amount; i++) {
+                const loc = getSpawnableArea(
+                    team,
+                    this
+                );
+
+                const bot = handler.spawnBots(
+                    loc,
+                    team,
+                    tank,
+                    botType,
+                    customName || null
+                );
+
+                if (!bot) continue;
+
+                bot.__hurtsBots = true;
+                bot.__hurtsBotsOwner = "Hurts Bots";
+                bot.botControlEnabled = true;
+                bot.botControlType = botType;
+                bot.hurtsBotsControl = handler.hurtsBotsControl;
+
+                spawned++;
+            }
+
+            sendJson(200, {
+                ok: true,
+                action: "spawn",
+                spawned,
+                bots: hurtsBots().length,
+                limit: 10
+            });
+            return;
+        }
+
+        if (action === "removeAll") {
+            let removed = 0;
+
+            for (const bot of hurtsBots()) {
+                try {
+                    bot.kill();
+                    removed++;
+                } catch (e) {
+                    try {
+                        bot.destroy();
+                        removed++;
+                    } catch (_) {}
+                }
+            }
+
+            sendJson(200, {
+                ok: true,
+                action: "removeAll",
+                removed,
+                bots: hurtsBots().length
+            });
+            return;
+        }
+
+        if (action === "mode") {
+            const validModes = [
+                "mouse",
+                "follow-player",
+                "center",
+                "top-left",
+                "top-right",
+                "bottom-left",
+                "bottom-right"
+            ];
+
+            const mode = String(json.mode || "").trim();
+
+            if (!validModes.includes(mode)) {
+                sendJson(400, {
+                    ok: false,
+                    error: "Invalid movement mode"
+                });
+                return;
+            }
+
+            handler.hurtsBotsControl.mode = mode;
+
+            sendJson(200, {
+                ok: true,
+                mode
+            });
+            return;
+        }
+
+        if (action === "mouse") {
+            const x = Number(json.x);
+            const y = Number(json.y);
+
+            if (!Number.isFinite(x) || !Number.isFinite(y)) {
+                sendJson(400, {
+                    ok: false,
+                    error: "Invalid mouse coordinates"
+                });
+                return;
+            }
+
+            handler.hurtsBotsControl.mouseX = x;
+            handler.hurtsBotsControl.mouseY = y;
+
+            sendJson(200, {
+                ok: true,
+                x,
+                y
+            });
+            return;
+        }
+
+        if (action === "mousePlayer") {
+            const playerId =
+                json.playerId !== undefined &&
+                json.playerId !== null
+                    ? Number(json.playerId)
+                    : null;
+
+            const playerName =
+                typeof json.playerName === "string"
+                    ? json.playerName.trim()
+                    : "";
+
+            const players = getPlayers();
+
+            const target = players.find(player => {
+                if (
+                    Number.isFinite(playerId) &&
+                    player.id === playerId
+                ) {
+                    return true;
+                }
+
+                return playerName &&
+                    player.name.toLowerCase() === playerName.toLowerCase();
+            });
+
+            if (!target) {
+                sendJson(404, {
+                    ok: false,
+                    error: "Player not found",
+                    players
+                });
+                return;
+            }
+
+            handler.hurtsBotsControl.mode = "mouse";
+            handler.hurtsBotsControl.mousePlayerId = target.id;
+            handler.hurtsBotsControl.mousePlayerName = target.name;
+
+            sendJson(200, {
+                ok: true,
+                mode: "mouse",
+                player: target
+            });
+            return;
+        }
+        if (action === "followPlayer") {
+            const playerId =
+                json.playerId !== undefined &&
+                json.playerId !== null
+                    ? Number(json.playerId)
+                    : null;
+
+            const playerName =
+                typeof json.playerName === "string"
+                    ? json.playerName.trim()
+                    : "";
+
+            const players = getPlayers();
+
+            const target = players.find(player => {
+                if (
+                    Number.isFinite(playerId) &&
+                    player.id === playerId
+                ) {
+                    return true;
+                }
+
+                return playerName &&
+                    player.name.toLowerCase() === playerName.toLowerCase();
+            });
+
+            if (!target) {
+                sendJson(404, {
+                    ok: false,
+                    error: "Player not found",
+                    players
+                });
+                return;
+            }
+
+            handler.hurtsBotsControl.mode = "follow-player";
+            handler.hurtsBotsControl.followPlayerId = target.id;
+            handler.hurtsBotsControl.followPlayerName = target.name;
+
+            sendJson(200, {
+                ok: true,
+                player: target
+            });
+            return;
+        }
+
+        sendJson(400, {
+            ok: false,
+            error: "Unknown action"
+        });
+    });
+
+    return;
+} break;
+case "/portalPermission": {
                     if (Config.allow_server_travel) {
                         res.writeHead(200);
                         res.end(JSON.stringify([{
@@ -284,6 +753,10 @@ class gameServer {
     start(softStart = false) {
         // Are we starting for the first time?
         if (!softStart) {
+            if (this.assaultRotation.length) {
+                this.assaultVariant = this.pickNextAssaultVariant();
+                this.gamemode = [this.assaultVariant];
+            }
             let overrideRoom = true;
             // Get gamemode
             for (let gamemode of this.gamemode) {
@@ -300,6 +773,7 @@ class gameServer {
             };
             // Update the server gamemode name
             this.name = this.gamemode.map(x => getName(x, Config) || (x[0].toUpperCase() + x.slice(1))).join(' ');
+            if (this.assaultRotation.length) this.location = this.name;
 
             this.showConsoleLoggings = false; // We do not like duplicate messages that uses console.log();
 
@@ -348,19 +822,33 @@ class gameServer {
             // Reset 2 stats so we can respawn.
             this.arenaClosed = false;
             global.cannotRespawn = false;
-            // Redefine the room
-            this.defineRoom();
+            const rotatingAssault = this.assaultRotation.length > 0;
+            if (rotatingAssault) {
+                this.assaultVariant = this.pickNextAssaultVariant();
+                this.gamemode = [this.assaultVariant];
+                this.applyAssaultVariantConfig();
+                this.name = getName(this.assaultVariant, Config);
+                this.location = this.name;
+                this.importedRoom = [];
+                this.setRoom();
+                if (this.parentPort) this.parentPort.postMessage(["mode", this.name, this.location]);
+            } else {
+                // Redefine the room
+                this.defineRoom();
+            }
             // Log that we are running again
             util.log(`New game instance is now running`);
 
             // Init every tile
-            for (let y = 0; y < this.room.setup.length; y++) {
-                for (let x = 0; x < this.room.setup[y].length; x++) {
-                    let tile = this.room.setup[y][x];
-                    tile.entities = [];
-                    tile.init(tile, this.room, this);
+            if (!rotatingAssault) {
+                for (let y = 0; y < this.room.setup.length; y++) {
+                    for (let x = 0; x < this.room.setup[y].length; x++) {
+                        let tile = this.room.setup[y][x];
+                        tile.entities = [];
+                        tile.init(tile, this.room, this);
+                    }
                 }
-            };
+            }
 
 
             // Set the gamemode manager again.
@@ -371,6 +859,27 @@ class gameServer {
 
         // Run the server
         this.gameHandler.run();
+    }
+
+    pickNextAssaultVariant() {
+        const choices = this.assaultRotation.filter(variant => variant !== this.assaultVariant);
+        return ran.choose(choices.length ? choices : this.assaultRotation);
+    }
+
+    applyAssaultVariantConfig() {
+        for (const key of this.assaultConfigKeys) Config[key] = this.assaultConfigDefaults[key];
+        const mode = require(`./game/gamemodes/config/${this.assaultVariant}.js`);
+        let overrideRoom = true;
+        for (const key in mode) {
+            if (key === "do_not_override_room") {
+                overrideRoom = mode[key];
+            } else if (key === "room_setup") {
+                if (!overrideRoom) Config[key] = mode[key];
+                else Config[key].push(...mode[key]);
+            } else {
+                Config[key] = mode[key];
+            }
+        }
     }
 
     // Define the room itself
@@ -397,8 +906,8 @@ class gameServer {
             this.room.wallGrid = {
                 xgrid: Config.sandbox ? 10 : 15,
                 ygrid: Config.sandbox ? 10 : 15,
-                width: Config.sandbox ? 600 : 900,
-                height: Config.sandbox ? 600 : 900,
+                width: Config.sandbox ? 1800 : 900,
+                height: Config.sandbox ? 1800 : 900,
                 getGrid: (location) => {
                     let x = Math.floor((location.x + this.room.wallGrid.width / 2) * this.room.wallGrid.xgrid / this.room.wallGrid.width);
                     let y = Math.floor((location.y + this.room.wallGrid.height / 2) * this.room.wallGrid.ygrid / this.room.wallGrid.height);
@@ -493,7 +1002,9 @@ class gameServer {
             for (let y = 0; y < Config.roomHeight; y++) {
                 for (let x = 0; x < Config.roomWidth; x++) {
                     if (this.importedRoom[y] == null) {
-                        this.importedRoom[y] = this.currentRoom[y];
+                        // Keep cached room definitions pristine so an Assault rotation can
+                        // safely load the same map module again after the next match.
+                        this.importedRoom[y] = this.currentRoom[y].slice();
                     } else if (this.currentRoom[y][x]) {
                         this.importedRoom[y][x] = this.currentRoom[y][x];
                     }
@@ -640,6 +1151,7 @@ class gameServer {
             setTimeout(() => {
                 // Wipe everything
                 entities.clear();
+                global.entityReferenceIndex?.clear();
                 targetableEntities.clear();
                 this.views = [];
                 this.minimap = [];
@@ -665,3 +1177,14 @@ class gameServer {
 }
 
 module.exports = { gameServer };
+
+
+
+
+
+
+
+
+
+
+

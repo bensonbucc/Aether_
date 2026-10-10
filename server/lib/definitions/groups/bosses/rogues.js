@@ -1,4 +1,4 @@
-const {combineStats, makeMenu, weaponArray} = require('../../facilitators.js')
+﻿const {combineStats, makeMenu, weaponArray} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 const g = require('../../gunvals.js')
 
@@ -56,7 +56,7 @@ Class.rogueArmada = {
     BODY: {
         FOV: 1.3,
         SPEED: base.SPEED * 0.1,
-        HEALTH: base.HEALTH * 16,
+        HEALTH: base.HEALTH * 48,
         SHIELD: base.SHIELD * 3,
         REGEN: base.REGEN,
         DAMAGE: base.DAMAGE * 3,
@@ -125,3 +125,4 @@ Class.rogueArmada = {
         TYPE: 'shottrapTurret'
     }, 7),
 }
+

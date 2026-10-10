@@ -14,6 +14,7 @@ global.mockupData = [];
 global.mockupMap = {};
 global.entities = new Map();
 global.targetableEntities = new Map();
+global.entityReferenceIndex = new Map();
 global.unspawnableTeam = [];
 global.walls = [];
 global.entitiesToAvoid = [];
@@ -38,6 +39,17 @@ global.TEAM_ENEMIES = -101;
 global.getSpawnableArea = (team, gameManager) => {
     gameManager = ensureIsManager(gameManager);
     let room = gameManager.room;
+    if (Config.assault) {
+        if (team === TEAM_GREEN) {
+            const mainBase = (room.spawnable?.assaultDominators || []).filter(tile => tile.isSanctuary);
+            if (mainBase.length) return ran.choose(mainBase).randomInside();
+        } else {
+            const mainBase = room.spawnable?.[team] || [];
+            if (mainBase.length) return ran.choose(mainBase).randomInside();
+        }
+        return null;
+    }
+
     return ran.choose((team in room.spawnable && room.spawnable[team].length) ? room.spawnable[team] : room.spawnableDefault).randomInside();
 }
 global.teamNames = [
@@ -178,9 +190,18 @@ global.bringToLife = (() => {
 
         // Controllers
         logs.though.set();
+        const performanceMonitor = Config.dev_build === true ? global.gameManager?.gameSpeedCheckHandler : null;
+        const profileControllers = performanceMonitor?.metricsEnabled === true;
         for (let i = 0, len = my.controllers.length; i < len; i++) {
             const AI = my.controllers[i];
-            const a = AI.think(b);
+            let a;
+            if (profileControllers) {
+                const controllerStart = performance.now();
+                a = AI.think(b);
+                performanceMonitor.recordControllerTime(AI.constructor.name, performance.now() - controllerStart);
+            } else {
+                a = AI.think(b);
+            }
             if (a) {
                 if (a.target != null && (b.target == null || AI.acceptsFromTop)) b.target = a.target;
                 if (a.goal != null && (b.goal == null || AI.acceptsFromTop)) b.goal = a.goal;
@@ -193,7 +214,23 @@ global.bringToLife = (() => {
         logs.though.mark();
 
         my.control.target = b.target == null ? my.control.target : b.target;
-        my.control.goal = b.goal || { x: my.x, y: my.y };
+        if (b.goal != null) {
+            my.control.goal = b.goal;
+        } else {
+            my.control.goal.x = my.x;
+            my.control.goal.y = my.y;
+        }
+
+        if (my.__aetherBotWaitingForMovement) {
+            const moving = my.control.goal.x !== my.x || my.control.goal.y !== my.y;
+
+            if (moving) {
+                my.__aetherBotWaitingForMovement = false;
+                my.invuln = false;
+            } else {
+                my.control.goal = { x: my.x, y: my.y };
+            }
+        }
         my.control.fire = b.fire ?? false;
         my.control.main = b.main ?? false;
         my.control.alt = b.alt ?? false;
@@ -723,3 +760,5 @@ global.loadAllMockups = (logText = true) => {
     if (logText) console.log("Finished created " + mockupData.length + " MockupEntities.");
     if (logText) console.log("Mockups generated in " + util.rounder(mockupsLoadEndTime - mockupsLoadStartTime, 3) + " milliseconds.\n");
 }
+
+

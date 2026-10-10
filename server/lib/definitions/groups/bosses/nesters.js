@@ -1,4 +1,4 @@
-const {combineStats, makeMenu, weaponArray} = require('../../facilitators.js')
+﻿const {combineStats, makeMenu, weaponArray} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 const g = require('../../gunvals.js')
 
@@ -11,7 +11,7 @@ Class.nester = {
     BODY: {
         FOV: 1.3,
         SPEED: base.SPEED * 0.25,
-        HEALTH: base.HEALTH * 9,
+        HEALTH: base.HEALTH * 27,
         SHIELD: base.SHIELD * 1.5,
         REGEN: base.REGEN,
         DAMAGE: base.DAMAGE * 2.5,
@@ -110,7 +110,7 @@ Class.nester_AR = {
     PARENT: "nester",
     SIZE: 60,
     BODY: {
-        HEALTH: base.HEALTH * 18,
+        HEALTH: base.HEALTH * 54,
     },
     VALUE: 8e5
 }
@@ -208,3 +208,4 @@ Class.nestChampion = {
         }, 5)
     ],
 }
+

@@ -1,5 +1,6 @@
-module.exports = {
-    classic_food: true,
+﻿module.exports = {
+    old_dreadnoughts: true,
+classic_food: true,
     //level_cap_cheat: 180,
     //level_cap: 180,
     /*growth: true,

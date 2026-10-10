@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Aether: Start Game",
+      "type": "shell",
+      "command": "npm start",
+      "windows": {
+        "command": "npm.cmd start"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}

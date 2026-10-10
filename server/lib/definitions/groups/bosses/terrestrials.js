@@ -1,4 +1,4 @@
-const {combineStats, LayeredBoss, makeMenu, setTurretProjectileRecoil} = require('../../facilitators.js')
+﻿const {combineStats, LayeredBoss, makeMenu, setTurretProjectileRecoil} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 const g = require('../../gunvals.js')
 const preset = require('../../presets.js')
@@ -13,7 +13,7 @@ Class.terrestrial = {
     CONTROLLERS: [["minion", {turnwiserange: 360}]],
     BODY: {
         FOV: 1,
-        HEALTH: 1000,
+        HEALTH: 3000,
         SHIELD: 50,
         REGEN: base.REGEN * 0.3,
         SPEED: base.SPEED * 0.7,
@@ -107,3 +107,4 @@ selene.addLayer({turret: {
     POSITION: [10, 7.5, 0, null, 160, 0],
     TYPE: ["hyperTwisterTurret", { INDEPENDENT: true }],
 }}, true, 6.5)
+

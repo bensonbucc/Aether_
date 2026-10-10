@@ -4,6 +4,21 @@ const g = require('../gunvals.js');
 const preset = require('../presets.js');
 
 // Basic Tank
+Class.wrench = {
+    PARENT: ["genericTank"],
+    LABEL: "Wrench",
+    COLOR: -1,
+    BODY: {
+        FOV: 1.05
+    },
+    GUNS: [],
+    TURRETS: [
+        {
+            POSITION: [20, 0, 0, 0, 360, 1],
+            TYPE: "wrenchTurret"
+        }
+    ]
+};
 Class.basic = {
     PARENT: 'genericTank',
     LABEL: "Basic",
@@ -888,7 +903,7 @@ Class.spawner = {
                 X: 15
             },
             PROPERTIES: {
-                MAX_CHILDREN: 4,
+                MAX_CHILDREN: 3,
                 SHOOT_SETTINGS: combineStats([g.minion, g.spawner]),
                 TYPE: 'minion',
                 STAT_CALCULATOR: 'drone',
@@ -1722,6 +1737,27 @@ Class.bonker = {
     },
     TURRETS: Class.smasher.TURRETS
 };
+// Heavy body-only rammers for Arms Race, each with a distinct balance profile.
+Class.rammerBulwark = {
+    PARENT: 'genericSmasher', LABEL: "Bulwark", SIZE: Class.genericTank.SIZE * 0.82, DANGER: 8,
+    BODY: { HEALTH: base.HEALTH * 1.35, DAMAGE: base.DAMAGE * 1.3, SPEED: base.SPEED * 0.72, DENSITY: base.DENSITY * 2.5 },
+    TURRETS: Class.smasher.TURRETS
+};
+Class.rammerPulverizer = {
+    PARENT: 'genericSmasher', LABEL: "Pulverizer", SIZE: Class.genericTank.SIZE * 0.78, DANGER: 8,
+    BODY: { HEALTH: base.HEALTH * 1.15, DAMAGE: base.DAMAGE * 1.65, SPEED: base.SPEED * 0.78, DENSITY: base.DENSITY * 2.2 },
+    TURRETS: Class.smasher.TURRETS
+};
+Class.rammerAvalanche = {
+    PARENT: 'genericSmasher', LABEL: "Avalanche", SIZE: Class.genericTank.SIZE * 0.9, DANGER: 9,
+    BODY: { HEALTH: base.HEALTH * 1.65, DAMAGE: base.DAMAGE * 1.2, SPEED: base.SPEED * 0.62, DENSITY: base.DENSITY * 3 },
+    TURRETS: Class.smasher.TURRETS
+};
+Class.rammerMauler = {
+    PARENT: 'genericSmasher', LABEL: "Mauler", SIZE: Class.genericTank.SIZE * 0.76, DANGER: 8,
+    BODY: { HEALTH: base.HEALTH * 1.25, DAMAGE: base.DAMAGE * 1.4, SPEED: base.SPEED * 0.86, DENSITY: base.DENSITY * 2.35 },
+    TURRETS: Class.smasher.TURRETS
+};
 Class.boomer = {
     PARENT: 'genericTank',
     LABEL: "Boomer",
@@ -1992,6 +2028,10 @@ Class.commander = {
         }, 3, {delayIncrement: 1/3})
     ]
 };
+// Give the opposite-facing trap gun the same cadence so a half-cycle delay alternates the shots.
+const conquerorShotReload = 1.15;
+const conquerorSharedReload = g.basic.reload * g.pounder.reload * g.destroyer.reload * conquerorShotReload;
+const conquerorTrapReload = conquerorSharedReload / (g.trap.reload * g.setTrap.reload);
 Class.conqueror = {
     PARENT: 'genericTank',
     LABEL: "Conqueror",
@@ -2006,10 +2046,11 @@ Class.conqueror = {
             POSITION: {
                 LENGTH: 20.5,
                 WIDTH: 14,
-                ANGLE: 180
+                ANGLE: 180,
+                DELAY: 0.5
             },
             PROPERTIES: {
-                SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.destroyer]),
+                SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.destroyer, { reload: conquerorShotReload }]),
                 TYPE: 'bullet'
             }
         },
@@ -2027,7 +2068,7 @@ Class.conqueror = {
                 X: 18
             },
             PROPERTIES: {
-                SHOOT_SETTINGS: combineStats([g.trap, g.setTrap]),
+                SHOOT_SETTINGS: combineStats([g.trap, g.setTrap, { reload: conquerorTrapReload }]),
                 TYPE: 'setTrap',
                 STAT_CALCULATOR: 'block'
             }
@@ -2183,7 +2224,8 @@ Class.cyclone = {
             },
             PROPERTIES: {
                 SHOOT_SETTINGS: combineStats([g.basic, g.twin, g.gunner, g.cyclone]),
-                TYPE: 'bullet'
+                TYPE: 'bullet',
+                CYCLONE_FORWARD_FIRE: true
             }
         },
         {
@@ -2195,7 +2237,8 @@ Class.cyclone = {
             },
             PROPERTIES: {
                 SHOOT_SETTINGS: combineStats([g.basic, g.twin, g.gunner, g.cyclone]),
-                TYPE: 'bullet'
+                TYPE: 'bullet',
+                CYCLONE_FORWARD_FIRE: true
             }
         },
         {
@@ -2207,7 +2250,8 @@ Class.cyclone = {
             },
             PROPERTIES: {
                 SHOOT_SETTINGS: combineStats([g.basic, g.twin, g.gunner, g.cyclone]),
-                TYPE: 'bullet'
+                TYPE: 'bullet',
+                CYCLONE_FORWARD_FIRE: true
             }
         },
         {
@@ -2219,7 +2263,9 @@ Class.cyclone = {
             },
             PROPERTIES: {
                 SHOOT_SETTINGS: combineStats([g.basic, g.twin, g.gunner, g.cyclone]),
-                TYPE: 'bullet'
+                TYPE: 'bullet',
+                CYCLONE_DEV_STACK: true,
+                CYCLONE_FORWARD_FIRE: true
             }
         }
     ], 3)
@@ -2597,7 +2643,7 @@ Class.factory = {
             PROPERTIES: {
                 SHOOT_SETTINGS: combineStats([g.minion]),
                 TYPE: 'minion',
-                MAX_CHILDREN: 6,
+                MAX_CHILDREN: 4,
                 STAT_CALCULATOR: 'drone',
                 AUTOFIRE: true,
                 SYNCS_SKILLS: true
@@ -2834,7 +2880,7 @@ Class.fork = {
                 WIDTH: 8
             },
             PROPERTIES: {
-                SHOOT_SETTINGS: combineStats([g.basic, g.sniper, g.marksman]),
+                SHOOT_SETTINGS: combineStats([g.basic, g.sniper, g.marksman, { damage: 0.97, reload: 1.03 }]),
                 TYPE: 'splitterBullet'
             }
         }
@@ -4365,6 +4411,67 @@ Class.rocketeer = {
         }
     ]
 };
+// Seven inset metal plates form the armor ring visible around the team-colored core.
+Class.septaMechArmorPanel = {
+    PARENT: 'genericEntity',
+    LABEL: '',
+    SHAPE: [[-0.9, -0.36], [0.72, -0.36], [1, 0], [0.72, 0.36], [-0.9, 0.36], [-1, 0]],
+    COLOR: 'grey',
+    ACCEPTS_SCORE: false,
+    DRAW_HEALTH: false,
+    GUNS: []
+};
+Class.septaMech = {
+    PARENT: 'genericTank',
+    LABEL: "Septa-Mech",
+    DANGER: 8,
+    BODY: {
+        SPEED: base.SPEED * 0.8
+    },
+    STAT_NAMES: statnames.trap,
+    HAS_NO_RECOIL: true,
+    TURRETS: Array.from({ length: 7 }, (_, index) => {
+        const angle = index * 360 / 7;
+        const radians = angle * Math.PI / 180;
+        return {
+            POSITION: [11, Math.cos(radians) * 12, Math.sin(radians) * 12, angle + 90, 360, -1],
+            TYPE: 'septaMechArmorPanel'
+        };
+    }),
+    // Seven radial barrels match the Septa-Mech body in the reference.
+    // They fire one after another at equal intervals, without rotating the tank.
+    // Reload upgrades speed up this same even firing sequence.
+    GUNS: Array.from({ length: 7 }, (_, index) => {
+        const angle = index * 360 / 7;
+        const delay = index / 7;
+        return [
+            {
+                POSITION: {
+                    LENGTH: 15,
+                    WIDTH: 7,
+                    ANGLE: angle,
+                    DELAY: delay
+                }
+            },
+            {
+                POSITION: {
+                    LENGTH: 3,
+                    WIDTH: 7,
+                    ASPECT: 1.7,
+                    X: 15,
+                    ANGLE: angle,
+                    DELAY: delay
+                },
+                PROPERTIES: {
+                    SHOOT_SETTINGS: combineStats([g.trap, g.hexaTrapper]),
+                    TYPE: 'septaMechTrap',
+                    STAT_CALCULATOR: 'trap',
+                    ...(index === 0 ? { AETHER_SEPTA_STACKER_BARREL: true } : {})
+                }
+            }
+        ];
+    }).flat()
+};
 Class.septaTrapper = {
     PARENT: 'genericTank',
     LABEL: "Septa-Trapper",
@@ -4391,7 +4498,8 @@ Class.septaTrapper = {
             PROPERTIES: {
                 SHOOT_SETTINGS: combineStats([g.trap, g.hexaTrapper]),
                 TYPE: 'trap',
-                STAT_CALCULATOR: 'trap'
+                STAT_CALCULATOR: 'trap',
+                AETHER_SEPTA_STACKER_BARREL: true
             }
         },
         ...weaponMirror([
@@ -4467,6 +4575,63 @@ Class.septaTrapper = {
         ], {delayOverflow: true})
     ]
 };
+// A Septa-style radial trap chassis used by the four Arms Race branches below.
+// Each design keeps one marked barrel for the optional Aether stacker.
+const makeSeptaFamilyTank = ({
+    label, danger, count, type = "trap", stats, length, width, aspect, x, speed,
+}) => ({
+    PARENT: "genericTank",
+    LABEL: label,
+    DANGER: danger,
+    BODY: { SPEED: base.SPEED * speed },
+    STAT_NAMES: statnames.trap,
+    HAS_NO_RECOIL: true,
+    GUNS: Array.from({ length: count }, (_, index) => ({
+        POSITION: {
+            LENGTH: length,
+            WIDTH: width,
+            ASPECT: aspect,
+            X: x,
+            ANGLE: index * 360 / count,
+            DELAY: index / count,
+        },
+        PROPERTIES: {
+            SHOOT_SETTINGS: combineStats(stats),
+            TYPE: type,
+            STAT_CALCULATOR: "trap",
+            ...(index === 0 ? { AETHER_SEPTA_STACKER_BARREL: true } : {}),
+        },
+    })),
+});
+
+// Five broad, reinforced traps with a slower, heavier volley.
+Class.septaRampart = makeSeptaFamilyTank({
+    label: "Septa-Rampart", danger: 8, count: 5, length: 5, width: 9,
+    aspect: 1.7, x: 11, speed: 0.78,
+    stats: [g.trap, g.hexaTrapper, g.pounder, { reload: 1.35, size: 1.25, health: 1.35, damage: 1.3, speed: 0.82, range: 1.15 }],
+});
+
+// Nine narrow barrels keep a rapid ring of smaller traps around the tank.
+Class.septaNeedler = makeSeptaFamilyTank({
+    label: "Septa-Needler", danger: 8, count: 9, length: 3, width: 4.5,
+    aspect: 1.45, x: 14, speed: 0.9,
+    stats: [g.trap, g.hexaTrapper, g.minigun, { reload: 0.72, size: 0.82, health: 0.88, damage: 0.82, speed: 1.08, range: 0.9 }],
+});
+
+// Three forward-leaning siege tubes launch large, durable traps.
+Class.septaMortar = makeSeptaFamilyTank({
+    label: "Septa-Mortar", danger: 9, count: 3, type: "trap", length: 7,
+    width: 10, aspect: 1.35, x: 9, speed: 0.72,
+    stats: [g.trap, g.pounder, { reload: 1.55, size: 1.45, health: 1.55, damage: 1.4, speed: 0.86, range: 1.25 }],
+});
+
+// Seven mech-trap launchers leave slow, anchored hazards in a wide defensive ring.
+Class.septaSentry = makeSeptaFamilyTank({
+    label: "Septa-Sentry", danger: 9, count: 7, type: "mechTrap", length: 4,
+    width: 7, aspect: 1.65, x: 12, speed: 0.82,
+    stats: [g.trap, g.hexaTrapper, { reload: 1.22, size: 1.08, health: 1.3, damage: 1.08, speed: 0.72, range: 1.1 }],
+});
+
 Class.shotgun = {
     PARENT: 'genericTank',
     LABEL: "Shotgun",
@@ -4680,6 +4845,15 @@ Class.splasher = {
         }
     ]
 };
+// The spread barrels and heavy center barrel share one timed firing stream in
+// the Spreadshot stacker. Preserve each barrel's projectile stats, but
+// normalize its reload to the side-barrel cycle.
+// Arras.io's Spreadshot fires its central cannon and outer barrel pairs on one
+// shared cadence. The main projectile keeps its distinct damage/speed stats;
+// only its reload is normalized so the stacker's barrel timing stays aligned.
+const spreadshotSideReload = combineStats([g.basic, g.pelleter, g.artillery, g.twin, g.spreadshot]).reload;
+const spreadshotMainReload = combineStats([g.basic, g.pounder, g.spreadshotMain, g.spreadshot]).reload;
+const spreadshotMainReloadScale = spreadshotSideReload / spreadshotMainReload;
 Class.spreadshot = {
     PARENT: 'genericTank',
     LABEL: "Spreadshot",
@@ -4761,7 +4935,7 @@ Class.spreadshot = {
                 WIDTH: 8
             },
             PROPERTIES: {
-                SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.spreadshotMain, g.spreadshot]),
+                SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.spreadshotMain, g.spreadshot, {reload: spreadshotMainReloadScale}]),
                 TYPE: 'bullet'
             }
         }
@@ -4788,6 +4962,51 @@ Class.stalker = {
         }
     ]
 };
+if (Config.arms_race) {
+    // Arms Race Pursuer: Stalker's focused sniper shot with permanent stealth.
+    Class.pursuer = {
+        PARENT: 'stalker',
+        LABEL: "Pursuer",
+        DANGER: 8,
+        INVISIBLE: [0, 0],
+        ALPHA: 0.12,
+        TOOLTIP: "Always cloaked; becomes easier to see at close range.",
+    };
+    // Slinker keeps a wide Destroyer cannon and fades when still, like its Arras.io counterpart.
+    Class.slinker = {
+        PARENT: 'destroyer',
+        LABEL: "Slinker",
+        DANGER: 7,
+        INVISIBLE: [0.08, 0.03],
+        GUNS: [
+            {
+                POSITION: { LENGTH: 23, WIDTH: 16, ASPECT: 1.1 },
+                PROPERTIES: {
+                    SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.destroyer]),
+                    TYPE: 'bullet'
+                }
+            }
+        ]
+    };
+    // Arms Race Rogue: Slinker's wide cannon with permanent, proximity-revealed stealth.
+    Class.rogue = {
+        PARENT: 'slinker',
+        LABEL: "Rogue",
+        DANGER: 8,
+        INVISIBLE: [0, 0],
+        ALPHA: 0.12,
+        TOOLTIP: "Always cloaked, with a powerful wide cannon.",
+        GUNS: [
+            {
+                POSITION: { LENGTH: 23, WIDTH: 18, ASPECT: 1.15 },
+                PROPERTIES: {
+                    SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.destroyer, { reload: 1.2, damage: 1.12 }]),
+                    TYPE: 'bullet'
+                }
+            }
+        ]
+    };
+}
 Class.streamliner = {
     PARENT: 'genericTank',
     LABEL: "Streamliner",
@@ -4818,6 +5037,23 @@ Class.subverter = {
         },
         PROPERTIES: {
             SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.minigun]),
+            TYPE: 'bullet'
+        }
+    }, 3, {lengthOffset: 2, delayIncrement: 1/3})
+};
+
+Class.toppler = {
+    PARENT: 'genericTank',
+    LABEL: "Toppler",
+    DANGER: 7,
+    BODY: Class.minigun.BODY,
+    GUNS: weaponStack({
+        POSITION: {
+            LENGTH: 21,
+            WIDTH: 16
+        },
+        PROPERTIES: {
+            SHOOT_SETTINGS: combineStats([g.basic, g.pounder, g.minigun, { speed: 0.65, damage: 1.45, health: 1.2 }]),
             TYPE: 'bullet'
         }
     }, 3, {lengthOffset: 2, delayIncrement: 1/3})
@@ -5765,9 +6001,47 @@ if (Config.arms_race || Config.retrograde) {
     addUpgrades('gunner', 3, ['battery', 'buttbuttin', 'blower']);
     addUpgrades('hexaTank', 3, ['deathStar']);
     addUpgrades('minigun', 3, ['subverter']);
+    addUpgrades('subverter', 3, ['toppler']);
     addUpgrades('pounder', 3, ['subverter', 'deathStar']);
     addUpgrades('smasher', 3, ['bonker']);
+    addUpgrades('basic', 2, ['wrench']);
 };
+
+if (Config.arms_race) {
+    // Keep all tank classes with built-in invisibility under the same branch.
+    addUpgrades('stalker', 4, ['pursuer', 'slinker', 'landmine', 'manager']);
+    removeUpgrades('destroyer', 4, ['slinker']);
+    removeUpgrades('smasher', 3, ['landmine']);
+    removeUpgrades('overseer', 3, ['manager']);
+    addUpgrades('slinker', 5, ['rogue']);
+}
+
+if (Config.arms_race || Config.arms_race_only) {
+    const armsRaceRammers = ['rammerBulwark', 'rammerPulverizer', 'rammerAvalanche', 'rammerMauler'];
+    addUpgrades('bonker', 4, armsRaceRammers);
+}
+
+if (Config.arms_race || Config.arms_race_only) {
+    addUpgrades('septaTrapper', 3, ['septaRampart', 'septaNeedler', 'septaMech']);
+    addUpgrades('septaMech', 3, ['septaMortar', 'septaSentry']);
+}
+
+if (Config.arms_race_only) {
+    Class.basic.UPGRADES_TIER_1 = [];
+    Class.basic.UPGRADES_TIER_2 = [
+        'buttbuttin',
+        'blower',
+        'battery',
+        'deathStar',
+        'subverter',
+        'bonker',
+        'wrench',
+        'septaTrapper',
+        'stalker'
+    ];
+    Class.basic.UPGRADES_TIER_4 = [];
+    delete Class.basic.UPGRADES_TIER_3;
+}
 
 if (Config.retrograde) {
     addUpgrades('machineGun', 2, ['blaster', 'gatlingGun', 'doubleMachine']);
@@ -5784,3 +6058,12 @@ if (Config.teams == 1) {
 
     removeUpgrades('whirlwind', 3, ['prophet']);
 };
+
+// In Forge, make the score unlock part of the ordinary tank upgrade UI.
+// Keeping this on genericTank makes it available after the player takes a normal branch.
+if (Config.dreadnought_forge) {
+    Class.genericTank.UPGRADES_SCORE = [{
+        score: Config.old_dreadnought_unlock_score || 10_000_000,
+        class: 'dreadnought_dreadsV1'
+    }];
+}

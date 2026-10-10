@@ -1,4 +1,4 @@
-const {combineStats, makeMenu, weaponArray, weaponMirror} = require('../../facilitators.js')
+﻿const {combineStats, makeMenu, weaponArray, weaponMirror} = require('../../facilitators.js')
 const {base} = require('../../constants.js')
 const g = require('../../gunvals.js')
 
@@ -22,7 +22,7 @@ Class.sorcerer = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.12 * base.SPEED,
-        HEALTH: 6 * base.HEALTH,
+        HEALTH: 18 * base.HEALTH,
         DAMAGE: 2 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -50,7 +50,7 @@ Class.summoner = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.1 * base.SPEED,
-        HEALTH: 7 * base.HEALTH,
+        HEALTH: 21 * base.HEALTH,
         DAMAGE: 2.6 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -78,7 +78,7 @@ Class.enchantress = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.09 * base.SPEED,
-        HEALTH: 10 * base.HEALTH,
+        HEALTH: 90 * base.HEALTH,
         DAMAGE: 3 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -106,7 +106,7 @@ Class.exorcistor = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.08 * base.SPEED,
-        HEALTH: 15 * base.HEALTH,
+        HEALTH: 45 * base.HEALTH,
         DAMAGE: 4 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -134,7 +134,7 @@ Class.shaman = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.07 * base.SPEED,
-        HEALTH: 20 * base.HEALTH,
+        HEALTH: 60 * base.HEALTH,
         DAMAGE: 5 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -162,7 +162,7 @@ Class.sangoma = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.06 * base.SPEED,
-        HEALTH: 25 * base.HEALTH,
+        HEALTH: 75 * base.HEALTH,
         DAMAGE: 6 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -193,7 +193,7 @@ Class.preacher = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.05 * base.SPEED,
-        HEALTH: 30 * base.HEALTH,
+        HEALTH: 90 * base.HEALTH,
         DAMAGE: 7 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -224,7 +224,7 @@ Class.herbalist = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.04 * base.SPEED,
-        HEALTH: 35 * base.HEALTH,
+        HEALTH: 105 * base.HEALTH,
         DAMAGE: 8 * base.DAMAGE,
     },
     GUNS: weaponArray({
@@ -255,7 +255,7 @@ Class.witch = {
     BODY: {
         FOV: 0.5,
         SPEED: 0.11 * base.SPEED,
-        HEALTH: 6.5 * base.HEALTH,
+        HEALTH: 19.5 * base.HEALTH,
         DAMAGE: 2.3 * base.DAMAGE,
     },
     GUNS: weaponArray(weaponMirror({
@@ -289,3 +289,4 @@ if (Config.classic_food) {
     Class.shaman.COLOR = "magenta"
     Class.shaman.UPGRADE_COLOR = "magenta"
 }
+

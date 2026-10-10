@@ -27,6 +27,20 @@ After the first install, you may use either `run.bat` (if you're on Windows) or 
 > [!NOTE]
 > If you're having issues launching from `run.sh`, make sure the file is set to be able to run as an executable in its properties. This only needs to be done once.
 
+## GitHub Codespaces
+
+The repository includes a Codespaces dev container configured for Node.js 24. When the Codespace is created, it installs the dependencies and forwards Aether's main web server on port `3000`.
+
+To play in a Codespace, open a terminal and run:
+
+```sh
+npm start
+```
+
+Codespaces runs Linux, so use `npm start` there. It runs the same `start` script as `npm.cmd start` on Windows. The Codespaces port link opens Aether in your browser. You can also use **Terminal → Run Task → Aether: Start Game** in VS Code.
+
+To create a Codespace, first push the repository to GitHub, then choose **Code → Codespaces → Create codespace** from the repository page. Review your pending files before pushing: the local checkout may contain backups, generated files, or private data that should not be uploaded.
+
 ## Server setup
 You can set up in-game servers in `server/config.js`. An example is present in the file.
 

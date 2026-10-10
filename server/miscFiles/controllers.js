@@ -1,4 +1,4 @@
-let lerp = (a, b, x) => a + x * (b - a);
+﻿let lerp = (a, b, x) => a + x * (b - a);
 let compressMovementOffsets = [
     { x: 1, y: 0},
     { x: 1, y: 1},
@@ -101,15 +101,85 @@ class IO {
     }
 }
 
+class io_controlledOverlordDrone extends IO {
+    constructor(body) {
+        super(body);
+        this.acceptsFromTop = true;
+    }
+
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
+    think(input) {
+        const owner = this.body.__openArrasBotOwner;
+        const control = owner && owner.__aetherBotControl;
+
+        if (!control) {
+            return {
+                goal: { x: this.body.x, y: this.body.y },
+                target: { x: 0, y: 0 },
+                fire: false,
+                main: false,
+                alt: false,
+                power: 0
+            };
+        }
+
+        const mouseX = Number(control.mouseX);
+        const mouseY = Number(control.mouseY);
+
+        if (!Number.isFinite(mouseX) || !Number.isFinite(mouseY)) {
+            return {
+                goal: { x: this.body.x, y: this.body.y },
+                target: { x: 0, y: 0 },
+                fire: true,
+                main: true,
+                alt: false,
+                power: 0
+            };
+        }
+
+        let dx = mouseX - this.body.x;
+        let dy = mouseY - this.body.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > 0) {
+            dx /= distance;
+            dy /= distance;
+        }
+
+        return {
+            goal: {
+                x: mouseX,
+                y: mouseY
+            },
+            target: {
+                x: dx,
+                y: dy
+            },
+            fire: true,
+            main: true,
+            alt: false,
+            power: 1
+        };
+    }
+}
 class io_playerBotControl extends IO {
     constructor(body) {
         super(body);
         this.acceptsFromTop = true;
     }
 
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
-        const handler = global.gameManager.gameHandler;
-        const control = handler && handler.botControl;
+        const owner = this.body.__openArrasBotOwner;
+        const control = owner && owner.__aetherBotControl;
 
         if (!control) {
             return {
@@ -119,6 +189,57 @@ class io_playerBotControl extends IO {
                 main: false,
                 alt: false,
                 power: 1
+            };
+        }
+
+        /*
+         * MIRROR ME
+         *
+         * When enabled, this bot copies the player who spawned it.
+         * Ownership is already attached to the bot, so one player's
+         * mirror state cannot affect another player's bots.
+         */
+        if (owner.__aetherMirrorEnabled === true && owner.command) {
+            const command = owner.command;
+            const target = owner.target || { x: 0, y: 0 };
+
+            const targetX = Number(target.x) || 0;
+            const targetY = Number(target.y) || 0;
+
+            const up = !!command.up;
+            const down = !!command.down;
+            const left = !!command.left;
+            const right = !!command.right;
+
+            const lmb = !!command.lmb;
+            const mmb = !!command.mmb;
+            const rmb = !!command.rmb;
+
+            return {
+                goal: {
+                    x: this.body.x + targetX,
+                    y: this.body.y + targetY
+                },
+
+                target: {
+                    x: targetX,
+                    y: targetY
+                },
+
+                fire: lmb || mmb || rmb,
+                main: lmb,
+                alt: rmb,
+
+                power: 1,
+
+                /*
+                 * Preserve the player's movement buttons for the
+                 * controller/update system.
+                 */
+                up,
+                down,
+                left,
+                right
             };
         }
 
@@ -169,17 +290,19 @@ class io_playerBotControl extends IO {
                 break;
         }
 
-        const goal = {
-            x: this.body.x + dx,
-            y: this.body.y + dy
-        };
+        const goal = control.mode === "mouse"
+            ? {
+                x: Number(control.mouseX),
+                y: Number(control.mouseY)
+            }
+            : {
+                x: this.body.x + dx,
+                y: this.body.y + dy
+            };
 
         return {
             goal,
-            target: {
-                x: dx,
-                y: dy
-            },
+            target: { x: dx, y: dy },
             fire: true,
             main: true,
             alt: false,
@@ -187,20 +310,102 @@ class io_playerBotControl extends IO {
         };
     }
 }
+class io_breachAI extends IO {
+    constructor(body, opts = {}) {
+        super(body);
+        this.homeX = Number(opts.homeX ?? body.x);
+        this.homeY = Number(opts.homeY ?? body.y);
+        this.combatRange = Number(opts.combatRange ?? 750);
+        this.leashRange = Number(opts.leashRange ?? 500);
+        this.acceptsFromTop = false;
+    }
+
+    think() {
+        const dx = this.body.x - this.homeX;
+        const dy = this.body.y - this.homeY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > this.leashRange) {
+            return {
+                goal: {
+                    x: this.homeX,
+                    y: this.homeY
+                },
+                power: 1
+            };
+        }
+
+        return {
+            goal: {
+                x: this.body.x,
+                y: this.body.y
+            },
+            power: 0
+        };
+    }
+}
 class io_siegeAI extends IO {  
   constructor(body, opts = {}) {
         super(body);
         this.enabled = true;
-        this.goalDefault = gameManager.room.center;
+        this.acceptsFromTop = true;
+        this.sanctuaryTarget = null;
+        this.targetRefresh = 0;
+        this.orbitAngle = Math.random() * Math.PI * 2;
+        this.orbitDirection = Math.random() < 0.5 ? -1 : 1;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         let tile = global.gameManager.room.getAt(this.body);
         if (tile && tile.name == "stopAI") {
             this.enabled = false;
         }
         if (this.enabled) {
+            const siege = global.gameManager?.gamemodeManager?.gameSiege;
+            const sanctuaries = siege?.sanctuaries || [];
+            if (this.sanctuaryTarget && (
+                this.sanctuaryTarget.isDead?.() || !sanctuaries.includes(this.sanctuaryTarget)
+            )) this.sanctuaryTarget = null;
+
+            if (!this.sanctuaryTarget || this.targetRefresh-- <= 0) {
+                this.targetRefresh = 30;
+                let closestDistance = Infinity;
+                for (const sanctuary of sanctuaries) {
+                    if (!sanctuary || sanctuary.isDead?.()) continue;
+                    const dx = sanctuary.x - this.body.x;
+                    const dy = sanctuary.y - this.body.y;
+                    const distance = dx * dx + dy * dy;
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        this.sanctuaryTarget = sanctuary;
+                    }
+                }
+                if (this.sanctuaryTarget) {
+                    this.orbitAngle = Math.atan2(
+                        this.body.y - this.sanctuaryTarget.y,
+                        this.body.x - this.sanctuaryTarget.x
+                    );
+                }
+            }
+
+            if (this.sanctuaryTarget) {
+                const target = this.sanctuaryTarget;
+                const radius = Math.max(230, (target.SIZE || 80) * 2.5);
+                this.orbitAngle += 0.018 * this.orbitDirection;
+                return {
+                    goal: {
+                        x: target.x + Math.cos(this.orbitAngle) * radius,
+                        y: target.y + Math.sin(this.orbitAngle) * radius,
+                    },
+                };
+            }
             return {
-                goal: this.goalDefault
+                goal: { x: this.body.x, y: this.body.y },
+                power: 0,
             }
         }
     }
@@ -259,6 +464,30 @@ class io_listenToPlayer extends IO {
     }
     // THE PLAYER MUST HAVE A VALID COMMAND AND TARGET OBJECT
     think() {
+        if (this.body.isAetherDevDuplicate && this.player.body) {
+            const ownerBody = this.player.body;
+            if (Number.isFinite(ownerBody.skill?.score)) {
+                const previousOwnerScore = this.body.__aetherDevLastOwnerScore;
+                if (Number.isFinite(previousOwnerScore) && ownerBody.skill.score > previousOwnerScore) {
+                    this.body.skill.score += ownerBody.skill.score - previousOwnerScore;
+                }
+                this.body.__aetherDevLastOwnerScore = ownerBody.skill.score;
+            }
+            this.body.reverseTank = ownerBody.reverseTank;
+            this.body.autospinBoost = ownerBody.autospinBoost;
+            this.body.aetherStack = ownerBody.aetherStack;
+            this.body.septaStacker = ownerBody.septaStacker === true;
+            const stackerGunIndex = ownerBody.gunsArrayed.indexOf(ownerBody.septaStackerGun);
+            if (stackerGunIndex >= 0) {
+                this.body.septaStackerGun = this.body.gunsArrayed[stackerGunIndex];
+                this.body.septaStackerTarget = ownerBody.septaStackerTarget
+                    ? { x: ownerBody.septaStackerTarget.x, y: ownerBody.septaStackerTarget.y }
+                    : undefined;
+            } else {
+                delete this.body.septaStackerGun;
+                delete this.body.septaStackerTarget;
+            }
+        }
         let fire = this.player.command.autofire || this.player.command.lmb,
             alt = this.player.command.autoalt || this.player.command.rmb,
             target = {
@@ -301,10 +530,48 @@ class io_listenToPlayer extends IO {
         };
     }
 }
+class io_aetherDevCommand extends IO {
+    think() {
+        const command = this.body.__aetherDevCommand;
+        if (!command) return {};
+        const handler = global.gameManager?.gameHandler;
+        const players = global.gameManager?.socketManager?.players || [];
+        if (command.mode === "follow") {
+            const leader = command.leader;
+            if (!leader || leader.isGhost) return {};
+            const angle = (this.body.id % 12) * Math.PI / 6;
+            const distance = 100 + (this.body.id % 4) * 28;
+            return { goal: { x: leader.x + Math.cos(angle) * distance, y: leader.y + Math.sin(angle) * distance }, target: { x: leader.x - this.body.x, y: leader.y - this.body.y }, power: 1 };
+        }
+        let target;
+        if (command.mode === "hunt") target = players.find(player => player.body?.id === command.targetId)?.body;
+        else if (command.mode === "huntAll") {
+            let bestDistance = Infinity;
+            for (const player of players) {
+                const body = player.body;
+                if (!body || body.isGhost || body === this.body || body.team === this.body.team) continue;
+                const distance = (body.x - this.body.x) ** 2 + (body.y - this.body.y) ** 2;
+                if (distance < bestDistance) { target = body; bestDistance = distance; }
+            }
+        }
+        if (!target || target.isGhost) return {};
+        if (this.body.team === target.team) {
+            this.body.__aetherDevOriginalTeam ??= this.body.team;
+            this.body.team = target.team + 1000;
+            this.body.refreshBodyAttributes();
+        }
+        return { goal: { x: target.x, y: target.y }, target: { x: target.x - this.body.x, y: target.y - this.body.y }, fire: true, main: true, alt: true, power: 1 };
+    }
+}
 class io_mapTargetToGoal extends IO {
     constructor(b) {
         super(b)
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.main || input.alt) {
             return {
@@ -333,6 +600,11 @@ class io_boomerang extends IO {
             y: 3 * b.master.control.target.y + b.master.y,
         }
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (this.b.range > this.r) this.r = this.b.range
         let t = 1; //1 - Math.sin(2 * Math.PI * this.b.range / this.r) || 1
@@ -401,11 +673,13 @@ class io_canRepel extends IO {
     constructor(b) {
         super(b)
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.alt && input.target) {
-            let x = this.body.master.master.x - this.body.x
-            let y = this.body.master.master.y - this.body.y
-            // if (x * x + y * y < 2250000) // (50 * 30) ^ 2
             return {
                 target: {
                     x: -input.target.x,
@@ -444,6 +718,11 @@ class io_mapAltToFire extends IO {
     constructor(body) {
         super(body)
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.alt) {
             return {
@@ -457,6 +736,11 @@ class io_mapFireToAlt extends IO {
         super(body);
         this.onlyIfHasAltFireGun = opts.onlyIfHasAltFireGun;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.fire) for (let i = 0; i < this.body.gunsArrayed.length; i++) if (!this.onlyIfHasAltFireGun || this.body.gunsArrayed[i].altFire) return { alt: true }
     }
@@ -465,6 +749,11 @@ class io_onlyAcceptInArc extends IO {
     constructor(body) {
         super(body)
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.target && this.body.firingArc != null) {
             if (Math.abs(util.angleDifference(Math.atan2(input.target.y, input.target.x), this.body.firingArc[0])) >= this.body.firingArc[1]) {
@@ -562,41 +851,43 @@ class io_nearestDifferentMaster extends IO {
     buildList(range) {
         const sqrRange = range * range;
         const sqrRangeMaster = sqrRange * 4 / 3;
-        const validCandidates = [];
+        const validCandidates = this.validTargets;
+        validCandidates.length = 0;
+        let mostDangerous = 0;
         for (const e of targetableEntities.values()) {
-            if (this.validate(e, this.body, this.body.master.master, sqrRange, sqrRangeMaster) && !this.wouldHitWall(e)) {
-                if (this.body.aiSettings.view360 || Math.abs(util.angleDifference(util.getDirection(this.body, e), this.body.firingArc[0])) < this.body.firingArc[1]) {
-                    validCandidates.push(e);
-                }
-            }
+            if (!this.validate(e, this.body, this.body.master.master, sqrRange, sqrRangeMaster)) continue;
+            if (!this.body.aiSettings.view360 && Math.abs(util.angleDifference(util.getDirection(this.body, e), this.body.firingArc[0])) >= this.body.firingArc[1]) continue;
+            if (this.wouldHitWall(e)) continue;
+            validCandidates.push(e);
+            mostDangerous = Math.max(mostDangerous, e.dangerValue);
         }
         if (!validCandidates.length) {
             this.targetLock = undefined;
-            return [];
-        }
-        let mostDangerous = 0;
-        for (const e of validCandidates) {
-            mostDangerous = Math.max(e.dangerValue, mostDangerous);
+            return validCandidates;
         }
         let keepTarget = false;
-        const finalTargets = validCandidates.filter((e) => {
-            // Even more expensive
-            return !this.wouldHitWall(e);
-        }).filter(e => {
+        let writeIndex = 0;
+        for (let readIndex = 0; readIndex < validCandidates.length; readIndex++) {
+            const e = validCandidates[readIndex];
             if (this.body.aiSettings.farm || e.dangerValue === mostDangerous) {
                 if (this.targetLock && e.id === this.targetLock.id) {
                     keepTarget = true;
                 }
-                return true;
+                validCandidates[writeIndex++] = e;
             }
-            return false;
-        });
+        }
+        validCandidates.length = writeIndex;
         // Reset target if it's not in there
         if (!keepTarget) {
             this.targetLock = undefined;
         }
-        return finalTargets;
+        return validCandidates;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.main || input.alt || this.body.master.autoOverride) {
             this.targetLock = undefined;
@@ -630,7 +921,16 @@ class io_nearestDifferentMaster extends IO {
         }
         // OK, now let's try reprocessing the targets!
         this.tick++;
-        if (this.tick > 2) {
+
+        if (++this.perceptionTick >= 3) {
+            this.scanEnvironment();
+            this.perceptionTick = 0;
+        }
+        const overloadLevel = this.body.isBot && !this.body.botControlEnabled
+            ? (global.gameManager?.gameSpeedCheckHandler?.overloadLevel || 0)
+            : 0;
+        const targetScanInterval = overloadLevel >= 3 ? 9 : overloadLevel === 2 ? 6 : overloadLevel === 1 ? 4 : 3;
+        if (this.tick >= targetScanInterval) {
             this.tick = 0;
             this.validTargets = this.buildList(range);
             if (this.targetLock && this.validTargets.indexOf(this.targetLock) === -1) {
@@ -741,6 +1041,11 @@ class io_healTeamMasters extends IO {
         }
         return finalTargets;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.main || input.alt || this.body.master.autoOverride) {
             this.targetLock = undefined;
@@ -774,6 +1079,11 @@ class io_healTeamMasters extends IO {
         }
         // OK, now let's try reprocessing the targets!
         this.tick++;
+
+        if (++this.perceptionTick >= 3) {
+            this.scanEnvironment();
+            this.perceptionTick = 0;
+        }
         if (this.tick > 2) {
             this.tick = 0;
             this.validTargets = this.buildList(range);
@@ -817,15 +1127,39 @@ class io_avoid extends IO {
     constructor(body) {
         super(body)
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         let masterId = this.body.master.id
         let range = this.body.size * this.body.size * 100
-        this.avoid = nearest(entities, {
-            x: this.body.x,
-            y: this.body.y
-        }, function (test, sqrdst) {
-            return (test.master.id !== masterId && (test.type === 'bullet' || test.type === 'drone' || test.type === 'swarm' || test.type === 'trap' || test.type === 'block') && sqrdst < range);
-        })
+        // Aether AI performance optimization.
+        // The original nearest(entities) call scans the entire entity
+        // collection. Reuse the result for two additional ticks.
+        this._aetherAvoidTick = (this._aetherAvoidTick || 0) + 1
+
+        if (this._aetherAvoidTick >= 3 || this.avoid == null) {
+            this._aetherAvoidTick = 0
+
+            this.avoid = nearest(entities, {
+                x: this.body.x,
+                y: this.body.y
+            }, function (test, sqrdst) {
+                return (
+                    test.master.id !== masterId &&
+                    (
+                        test.type === 'bullet' ||
+                        test.type === 'drone' ||
+                        test.type === 'swarm' ||
+                        test.type === 'trap' ||
+                        test.type === 'block'
+                    ) &&
+                    sqrdst < range
+                );
+            })
+        }
         // Aim at that target
         if (this.avoid != null) {
             // Consider how fast it's moving.
@@ -857,10 +1191,73 @@ class io_minion extends IO {
         this.turnwise = 1
         this.opts = opts;
     }
+
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (this.body.aiSettings.reverseDirection && ran.chance(0.005)) {
             this.turnwise = -1 * this.turnwise;
         }
+
+        /*
+         * AETHER CONTROLLED OVERLORD DRONES
+         *
+         * These are still real Class.drone entities.
+         * We only replace their movement decision.
+         *
+         * IMPORTANT:
+         * Do not fall through into the normal minion/master
+         * movement code, because that code intentionally keeps
+         * drones close to their Overlord.
+         */
+        const master = this.body.master;
+
+        if (
+            master &&
+            master.__openArrasBotControl === true &&
+            master.defs &&
+            master.defs[0] === "overlord"
+        ) {
+            const owner = master.__openArrasBotOwner;
+            const control = owner && owner.__aetherBotControl;
+
+            if (
+                control &&
+                control.mode === "mouse" &&
+                Number.isFinite(Number(control.mouseX)) &&
+                Number.isFinite(Number(control.mouseY))
+            ) {
+                const x = Number(control.mouseX);
+                const y = Number(control.mouseY);
+
+                return {
+                    goal: {
+                        x: x,
+                        y: y
+                    },
+                    power: 1
+                };
+            }
+
+            /*
+             * Controlled Overlord drone but no valid mouse target.
+             * Do NOT run normal master-following behavior.
+             */
+            return {
+                goal: {
+                    x: this.body.x,
+                    y: this.body.y
+                },
+                power: 0
+            };
+        }
+
+        /*
+         * Normal Arras drones use the original behavior below.
+         */
         if (input.target != null && (input.alt || input.main)) {
             let sizeFactor = Math.sqrt(this.body.master.size / this.body.master.SIZE)
             let leash = 82 * sizeFactor
@@ -869,43 +1266,40 @@ class io_minion extends IO {
             let goal
             let power = 1
             let target = new Vector(input.target.x, input.target.y)
+
             if (input.alt) {
-                // Leash
-                if (target.length < leash) {
-                    goal = {
-                        x: this.body.x + target.x,
-                        y: this.body.y + target.y,
-                    }
-                    // Spiral repel
-                } else if (target.length < repel) {
-                    let dir = -this.turnwise * target.direction + Math.PI / 5
-                    goal = {
-                        x: this.body.x + Math.cos(dir),
-                        y: this.body.y + Math.sin(dir),
-                    }
-                    // Free repel
-                } else {
-                    goal = {
-                        x: this.body.x - target.x,
-                        y: this.body.y - target.y,
-                    }
+                let dir = target.direction
+                let dist = target.length
+
+                if (dist < leash) {
+                    dist = leash
+                }
+
+                goal = {
+                    x: this.body.master.x + Math.cos(dir) * dist,
+                    y: this.body.master.y + Math.sin(dir) * dist
                 }
             } else if (input.main) {
-                // Orbit point
-                let dir = this.turnwise * target.direction + 0.01
-                goal = {
-                    x: this.body.x + target.x - orbit * Math.cos(dir),
-                    y: this.body.y + target.y - orbit * Math.sin(dir),
+                let dir = target.direction
+                let dist = target.length
+
+                if (dist < orbit) {
+                    dist = orbit
                 }
-                if (Math.abs(target.length - orbit) < this.body.size * 2) {
-                    power = 0.7
+
+                goal = {
+                    x: this.body.master.x + Math.cos(dir) * dist,
+                    y: this.body.master.y + Math.sin(dir) * dist
                 }
             }
+
             return {
                 goal: goal,
                 power: power,
             }
         }
+
+        return {};
     }
 }
 class io_hangOutNearMaster extends IO {
@@ -919,6 +1313,11 @@ class io_hangOutNearMaster extends IO {
         }
         this.timer = 0
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (this.body.invisible[1]) return {}
         if (this.body.source !== this.body) {
@@ -960,6 +1359,11 @@ class io_spin extends IO {
         this.onlyWhenIdle = opts.onlyWhenIdle;
         this.independent = opts.independent;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (this.onlyWhenIdle && input.target) {
             this.a = Math.atan2(input.target.y, input.target.x);
@@ -990,6 +1394,11 @@ class io_spin2 extends IO {
         this.body.facingType = "spin";
         this.body.facingTypeArgs = {speed: this.speed * reverse};
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (!this.reverseOnTheFly || !this.reverseOnAlt) return;
 
@@ -1009,6 +1418,11 @@ class io_fleeAtLowHealth extends IO {
         this.fear = util.clamp(ran.gauss(0.7, 0.15), 0.1, 0.9);
         b.fear = this.fear;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (input.fire && input.target != null && this.body.health.amount < this.body.health.max * this.fear) {
             return {
@@ -1027,6 +1441,11 @@ class io_zoom extends IO {
         this.distance = opts.distance || 275;
         this.dynamic = opts.dynamic;
         this.permanent = opts.permanent;
+    }
+
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
     }
 
     think(input) {
@@ -1057,6 +1476,11 @@ class io_wanderAroundMap extends IO {
         this.enabled = true;
         this.botMoveEnabled = true;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (Config.BOT_MOVE && this.botMoveEnabled) {
             this.enabled = false;
@@ -1177,6 +1601,11 @@ class io_whirlwind extends IO {
         this.radiusScalingSpeed = opts.radiusScalingSpeed || 10;
     }
     
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         this.body.angle += (this.body.skill.spd * 2 + this.body.aiSettings.SPEED) * Math.PI / 180;
         let trueMaxDistance = this.maxDistance * this.body.size;
@@ -1204,6 +1633,11 @@ class io_orbit extends IO {
         this.invert = opts.invert ?? false;
     }
   
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         let invertFactor = this.invert ? -1 : 1,
             master = this.body.master.useOwnMaster ? this.body.master : this.body.master.master,
@@ -1242,6 +1676,11 @@ class io_snake extends IO {
         // Attempts to get the bullets to intersect with the cursor
         this.waveHorizontalScale = util.clamp(util.getDistance(this.body.master.master.control.target, {x: 0, y: 0}) / Math.PI, 45, 75);
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         // Define a sin wave for the bullet to follow
         let waveX = this.waveHorizontalScale * (this.body.RANGE - this.body.range) / this.wavePeriod;
@@ -1263,6 +1702,11 @@ class io_disableOnOverride extends IO {
         this.pacify = false;
         this.lastPacify = false;
         this.savedDamage = 0;
+    }
+
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
     }
 
     think(input) {
@@ -1296,6 +1740,11 @@ class io_scaleWithMaster extends IO {
         super(body);
         this.storedSize = 0;
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         let masterSize = this.body.master.size;
         if (masterSize != this.storedSize) {
@@ -1326,6 +1775,11 @@ class io_snakeTillNot extends IO {
         this.waveHorizontalScale = util.clamp(util.getDistance(this.body.master.master.control.target, {x: 0, y: 0}) / Math.PI, 45, 75);
         this.body.dontEverDareToDoThatSnakeShitEverAgainYouPieceOfShit ??= false
     }
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         if (!this.body.dontEverDareToDoThatSnakeShitEverAgainYouPieceOfShit) {
             // Define a sin wave for the bullet to follow
@@ -1362,6 +1816,11 @@ class io_oroboros extends IO {
         this.lerpTimer = 0;
         body.dontEverDareToDoThatSnakeShitEverAgainYouPieceOfShit = false
     };
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
     think(input) {
         this.x += this.speed
         if (util.getDistance({x: this.masterBodyX, y: this.masterBodyY}, {x: this.body.x, y: this.body.y}) > util.getDistance({x: 0, y: 0}, {x: this.masterX, y: this.masterY}) || this.gonnaGoInFUCKINGCircles) {
@@ -1395,6 +1854,11 @@ class io_defenderBot extends IO {
         super(body);
         this.targetLock = undefined;
         this.tick = 0;
+    }
+
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
     }
 
     think(input) {
@@ -1513,13 +1977,434 @@ class io_defenderBot extends IO {
     }
 }
 
+class io_nullOverlordAI extends IO {
+    constructor(body) {
+        super(body);
+
+        this.targetLock = undefined;
+        this.tick = 0;
+        this.lead = 0;
+        this.orbitDirection = Math.random() < 0.5 ? 1 : -1;
+        this.combatMode = "prepare";
+        this.modeTicks = 0;
+        this.perceptionTick = 0;
+        this.visibleThreats = [];
+        this.visibleEnemies = [];
+        this.visibleDrones = [];
+        this.incomingBullets = [];
+        this.memory = global.gameManager?.gameHandler?.nullMemory || null;
+    }
+
+    isValidTarget(entity) {
+        if (!entity) return false;
+        if (entity === this.body) return false;
+        if (entity.health && entity.health.amount <= 0) return false;
+        if (entity.invuln || entity.godmode) return false;
+        if (entity.ignoredByAi) return false;
+
+        if (entity.type !== "tank" &&
+            entity.type !== "miniboss" &&
+            entity.type !== "crasher" &&
+            entity.type !== "drone" &&
+            entity.type !== "swarm" &&
+            entity.type !== "minion") {
+            return false;
+        }
+
+        if (entity.team === this.body.team) return false;
+        if (entity.team === TEAM_ROOM) return false;
+
+        return true;
+    }
+
+    findTarget() {
+        let best = null;
+        let bestScore = -Infinity;
+
+        for (const entity of targetableEntities.values()) {
+            if (!this.isValidTarget(entity)) continue;
+
+            const dx = entity.x - this.body.x;
+            const dy = entity.y - this.body.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (!Number.isFinite(distance)) continue;
+            if (distance > this.body.fov * 1.35) continue;
+
+            // NULL refuses targets it cannot currently see through walls.
+            if (wouldHitWall(this.body, entity)) continue;
+
+            const danger = Number.isFinite(entity.dangerValue)
+                ? entity.dangerValue
+                : 1;
+
+            const health = entity.health
+                ? entity.health.amount
+                : 1;
+
+            const maxHealth = entity.health
+                ? entity.health.max
+                : health;
+
+            const healthRatio = maxHealth > 0
+                ? health / maxHealth
+                : 1;
+
+            // Prefer dangerous nearby targets, while giving weakened
+            // targets a meaningful finishing bonus.
+            const distanceScore =
+                Math.max(0, 1 - distance / (this.body.fov * 1.35));
+
+            const designatedOpponent = this.body.__aetherXenocratesOwnerSocket?.player?.body ||
+                this.body.__aetherXenocratesOwner?.body;
+            const score =
+                (entity === designatedOpponent ? 10000 : 0) +
+                danger * 3 +
+                distanceScore * 5 +
+                (1 - healthRatio) * 4;
+
+            if (score > bestScore) {
+                bestScore = score;
+                best = entity;
+            }
+        }
+
+        return best;
+    }
+
+    scanEnvironment() {
+        const body = this.body;
+        const range = body.fov * 1.5;
+        const rangeSq = range * range;
+
+        this.visibleThreats = [];
+        this.visibleEnemies = [];
+        this.visibleDrones = [];
+        this.incomingBullets = [];
+        this.memory = global.gameManager?.gameHandler?.nullMemory || null;
+
+        for (const e of targetableEntities.values()) {
+            if (!e || e === body || !Number.isFinite(e.x) || !Number.isFinite(e.y)) continue;
+
+            const dx = e.x - body.x;
+            const dy = e.y - body.y;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq > rangeSq) continue;
+            if (e.health && e.health.amount <= 0) continue;
+            if (e.team === body.team || e.team === TEAM_ROOM) continue;
+            if (wouldHitWall(body, e)) continue;
+
+            const info = {
+                entity: e,
+                distance: Math.sqrt(distSq),
+                danger: Number.isFinite(e.dangerValue) ? e.dangerValue : 1
+            };
+
+            if (e.type === "bullet") {
+                const vx = e.velocity?.x || 0;
+                const vy = e.velocity?.y || 0;
+                const rx = body.x - e.x;
+                const ry = body.y - e.y;
+                const closing = vx * rx + vy * ry;
+
+                if (closing > 0) this.incomingBullets.push(info);
+                continue;
+            }
+
+            if (e.type === "drone" || e.type === "swarm" || e.type === "minion") {
+                this.visibleDrones.push(info);
+            } else if (
+                e.type === "tank" ||
+                e.type === "miniboss" ||
+                e.type === "crasher"
+            ) {
+                this.visibleEnemies.push(info);
+            }
+
+            this.visibleThreats.push(info);
+        }
+
+        this.visibleThreats.sort((a, b) => b.danger - a.danger);
+        this.visibleEnemies.sort((a, b) => a.distance - b.distance);
+        this.visibleDrones.sort((a, b) => a.distance - b.distance);
+        this.incomingBullets.sort((a, b) => a.distance - b.distance);
+    }
+
+    getBulletDodgeVector() {
+        const body = this.body;
+        let dodgeX = 0;
+        let dodgeY = 0;
+        let threats = 0;
+
+        // Predict near-term projectile paths and move away from their closest
+        // point of approach. This only examines the already-filtered nearby
+        // incoming bullets collected by scanEnvironment().
+        for (const info of this.incomingBullets.slice(0, 12)) {
+            const bullet = info.entity;
+            const relativeX = bullet.x - body.x;
+            const relativeY = bullet.y - body.y;
+            const velocityX = (bullet.velocity?.x || 0) - (body.velocity?.x || 0);
+            const velocityY = (bullet.velocity?.y || 0) - (body.velocity?.y || 0);
+            const speedSquared = velocityX * velocityX + velocityY * velocityY;
+            if (speedSquared < 0.01) continue;
+
+            const time = -(relativeX * velocityX + relativeY * velocityY) / speedSquared;
+            if (time < 0 || time > 1.6) continue;
+
+            const closestX = relativeX + velocityX * time;
+            const closestY = relativeY + velocityY * time;
+            const closestDistance = Math.sqrt(closestX * closestX + closestY * closestY);
+            const safeDistance = body.size + Math.max(6, bullet.size || bullet.realSize || 0) + 55;
+            if (closestDistance >= safeDistance) continue;
+
+            const urgency = (safeDistance - closestDistance) / safeDistance / Math.max(0.2, time);
+            let awayX = -closestX;
+            let awayY = -closestY;
+            if (closestDistance < 1) {
+                // A perfect center-line intercept has no radial escape vector;
+                // sidestep perpendicular to the projectile instead.
+                awayX = -velocityY * this.orbitDirection;
+                awayY = velocityX * this.orbitDirection;
+            }
+            const inverseDistance = 1 / Math.max(1, Math.sqrt(awayX * awayX + awayY * awayY));
+            dodgeX += awayX * inverseDistance * urgency;
+            dodgeY += awayY * inverseDistance * urgency;
+            threats++;
+        }
+
+        const magnitude = Math.sqrt(dodgeX * dodgeX + dodgeY * dodgeY);
+        if (!threats || magnitude < 0.001) return null;
+
+        const dodgeDistance = Math.max(300, body.size * 10);
+        return {
+            x: dodgeX / magnitude * dodgeDistance,
+            y: dodgeY / magnitude * dodgeDistance,
+            threats
+        };
+    }
+
+    getLearnedTactics(opponent) {
+        if (!this.memory || !opponent) return null;
+        try { return this.memory.getTactics(opponent); } catch { return null; }
+    }
+
+    think(input) {
+        if (!this.body.__aetherNullAI) return {};
+
+        this.tick++;
+
+        if (++this.perceptionTick >= 3) {
+            this.scanEnvironment();
+            this.perceptionTick = 0;
+        }
+
+        if (
+            !this.targetLock ||
+            !this.isValidTarget(this.targetLock) ||
+            wouldHitWall(this.body, this.targetLock) ||
+            this.tick >= 5
+        ) {
+            this.targetLock = this.findTarget();
+            this.tick = 0;
+        }
+
+        if (!this.targetLock) {
+            return {
+                target: {
+                    x: this.body.x + Math.cos(this.body.facing),
+                    y: this.body.y + Math.sin(this.body.facing)
+                },
+                goal: {
+                    x: this.body.x,
+                    y: this.body.y
+                },
+                fire: false,
+                main: false,
+                alt: false
+            };
+        }
+
+        const target = this.targetLock;
+
+        // Persistent tactical learning.
+        const learned = this.getLearnedTactics(target);
+
+        this.learnedDistanceBias = 0;
+
+        if (learned && learned.fights >= 2) {
+            const deaths = Math.max(1, learned.deaths);
+            const closeDeathRate = learned.closeRangeDeaths / deaths;
+            const longDeathRate = learned.longRangeDeaths / deaths;
+
+            // Repeated close-range deaths -> create more space.
+            if (closeDeathRate > 0.55) {
+                this.learnedDistanceBias += Math.min(
+                    260,
+                    (closeDeathRate - 0.55) * 500
+                );
+            }
+
+            // Repeated long-range deaths -> pressure more.
+            if (longDeathRate > 0.65) {
+                this.learnedDistanceBias -= Math.min(
+                    180,
+                    (longDeathRate - 0.65) * 400
+                );
+            }
+
+            if (learned.wins > 0) {
+                const closeWinRate = learned.closeRangeWins / learned.wins;
+                const longWinRate = learned.longRangeWins / learned.wins;
+                if (closeWinRate > longWinRate + 0.2) {
+                    this.learnedDistanceBias -= Math.min(120, (closeWinRate - longWinRate) * 180);
+                } else if (longWinRate > closeWinRate + 0.2) {
+                    this.learnedDistanceBias += Math.min(120, (longWinRate - closeWinRate) * 180);
+                }
+            }
+        }
+        const dx = target.x - this.body.x;
+        const dy = target.y - this.body.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (!Number.isFinite(distance) || distance <= 0) {
+            return {};
+        }
+
+        // Predict moving targets instead of aiming at their current position.
+        let trackingSpeed = this.body.topSpeed;
+
+        if (this.body.guns && this.body.guns.length) {
+            for (const gun of this.body.guns) {
+                if (!gun.canShoot) continue;
+
+                const tracking = gun.getTracking();
+
+                if (tracking && Number.isFinite(tracking.speed)) {
+                    trackingSpeed = Math.max(
+                        0.01,
+                        tracking.speed
+                    );
+                    break;
+                }
+            }
+        }
+
+        const targetVelocity = target.velocity || { x: 0, y: 0 };
+
+        let time =
+            distance /
+            Math.max(0.01, trackingSpeed);
+
+        time = Math.min(time, 20);
+
+        const predictedX =
+            target.x +
+            targetVelocity.x * time;
+
+        const predictedY =
+            target.y +
+            targetVelocity.y * time;
+
+        // Fight from an angle instead of driving directly into the target.
+        const targetAngle = Math.atan2(
+            predictedY - this.body.y,
+            predictedX - this.body.x
+        );
+
+        const healthRatio = this.body.health && this.body.health.max > 0 ? this.body.health.amount / this.body.health.max : 1;
+
+        this.modeTicks++;
+        this.body.__aetherNullLastDistance = distance;
+        this.body.__aetherNullLastCombatMode = this.combatMode;
+
+        const dangerRange = Math.max(this.body.size * 7, 260);
+        const attackRange = Math.max(this.body.size * 10, 420);
+
+        if (healthRatio < 0.38 || distance < dangerRange) this.combatMode = "retreat";
+        else if (distance > attackRange) this.combatMode = "approach";
+        else if (this.modeTicks > 90) { this.combatMode = "reposition"; this.modeTicks = 0;
+        this.perceptionTick = 0;
+        this.visibleThreats = [];
+        this.visibleEnemies = [];
+        this.visibleDrones = [];
+        this.incomingBullets = [];
+        this.memory = global.gameManager?.gameHandler?.nullMemory || null; this.orbitDirection *= -1; }
+        else this.combatMode = "attack";
+
+        let desiredDistance = this.combatMode === "retreat" ? Math.max(this.body.size * 12, 520) : this.combatMode === "approach" ? Math.max(this.body.size * 6, 280) : Math.max(this.body.size * 8, 340);
+
+        desiredDistance += this.learnedDistanceBias || 0;
+        desiredDistance = Math.max(this.body.size * 5, Math.min(this.body.size * 15, desiredDistance));
+
+        const moveAngle = targetAngle + this.orbitDirection * Math.PI / 2;
+        const moveDistance = this.combatMode === "retreat" ? -desiredDistance : desiredDistance;
+
+        let goal = { x: target.x + Math.cos(moveAngle) * this.body.size * 2 + Math.cos(targetAngle) * moveDistance, y: target.y + Math.sin(moveAngle) * this.body.size * 2 + Math.sin(targetAngle) * moveDistance };
+
+        // Never intentionally choose a wall-blocked attack position.
+        if (wouldHitWall(this.body, goal)) {
+            this.orbitDirection *= -1;
+
+            goal = {
+                x:
+                    target.x +
+                    Math.cos(
+                        targetAngle +
+                        this.orbitDirection * Math.PI / 2
+                    ) * desiredDistance,
+
+                y:
+                    target.y +
+                    Math.sin(
+                        targetAngle +
+                        this.orbitDirection * Math.PI / 2
+                    ) * desiredDistance
+            };
+        }
+
+        const dodge = this.getBulletDodgeVector();
+        if (dodge) {
+            const dodgeGoal = {
+                x: goal.x + dodge.x,
+                y: goal.y + dodge.y
+            };
+            const directDodgeGoal = {
+                x: this.body.x + dodge.x,
+                y: this.body.y + dodge.y
+            };
+            if (!wouldHitWall(this.body, dodgeGoal)) goal = dodgeGoal;
+            else if (!wouldHitWall(this.body, directDodgeGoal)) goal = directDodgeGoal;
+            this.body.__aetherXenocratesDodging = dodge.threats;
+        } else {
+            this.body.__aetherXenocratesDodging = 0;
+        }
+
+        return {
+            target: {
+                x: predictedX - this.body.x,
+                y: predictedY - this.body.y
+            },
+
+            goal,
+
+            fire: true,
+            main: true,
+            alt: false,
+            power: 1
+        };
+    }
+}
 let ioTypes = {
+    nullOverlordAI: io_nullOverlordAI,
     defenderBot: io_defenderBot,
     playerBotControl: io_playerBotControl,
+      controlledOverlordDrone: io_controlledOverlordDrone,
     //misc
     zoom: io_zoom,
     doNothing: io_doNothing,
     listenToPlayer: io_listenToPlayer,
+    aetherDevCommand: io_aetherDevCommand,
     alwaysFire: io_alwaysFire,
     mapAltToFire: io_mapAltToFire,
     mapFireToAlt: io_mapFireToAlt,
@@ -1542,6 +2427,7 @@ let ioTypes = {
     canRepel: io_canRepel,
     mapTargetToGoal: io_mapTargetToGoal,
     siegeAI: io_siegeAI,
+    breachAI: io_siegeAI,
     moveInCircles: io_moveInCircles,
     boomerang: io_boomerang,
     formulaTarget: io_formulaTarget,
@@ -1556,3 +2442,27 @@ let ioTypes = {
 };
 
 module.exports = { ioTypes, IO };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

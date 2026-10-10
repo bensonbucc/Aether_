@@ -1,0 +1,15 @@
+{
+  "name": "Aether",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
+  "postCreateCommand": "npm install",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Aether web server",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "notify"
+  }
+}

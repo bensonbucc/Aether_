@@ -249,7 +249,7 @@ class Siege {
         }
     }
 
-    spawnEnemyWrapper(loc, type) {
+    spawnEnemyWrapper(loc, type, orbitSanctuaries = false) {
         let enemy = new Entity(loc);
         enemy.define(type);
         enemy.team = TEAM_ENEMIES;
@@ -257,7 +257,7 @@ class Siege {
         enemy.refreshSkills();
         enemy.refreshBodyAttributes();
         enemy.isBoss = true;
-        if (Config.fortress || Config.citadel) enemy.controllers.push(new ioTypes.siegeAI(enemy, {}, global.gameManager));
+        if (orbitSanctuaries && Config.siege) enemy.controllers.push(new ioTypes.siegeAI(enemy, {}, global.gameManager));
         this.remainingEnemies++;
         enemy.on('dead', () => {
             //this enemy has been killed, decrease the remainingEnemies counter
@@ -280,7 +280,7 @@ class Siege {
         for (let boss of this.waves[waveId]) {
             let spot = ran.choose(global.gameManager.room.spawnable["bossSpawnTile"]).randomInside();
 
-            let enemy = this.spawnEnemyWrapper(spot, boss);
+            let enemy = this.spawnEnemyWrapper(spot, boss, true);
             enemy.define({ DANGER: 25 + enemy.SIZE / 5 });
         }
 
@@ -303,6 +303,33 @@ class Siege {
             global.gameManager.socketManager.broadcast(`The sanctuaries have been upgraded to Tier ${newSancTier}`);
             this.sanctuaryTier = newSancTier;
         }
+    }
+
+    spawnSpecialWave(waveKey) {
+        const presets = {
+            bob: { label: "Bob", bosses: ["bob"] },
+            bobRush: { label: "Bob Rush", bosses: ["bob", "bob", "bob"] },
+            bobNemesis: { label: "Bob and Nemesis", bosses: ["bob", "nemesis"] },
+            eliteTrio: { label: "Elite Trio", bosses: ["eliteDestroyer", "eliteGunner", "eliteSprayer"] },
+            celestialPair: { label: "Celestial Pair", bosses: ["paladin", "freyja"] },
+        };
+        const preset = presets[waveKey];
+        const spawnTiles = global.gameManager.room.spawnable["bossSpawnTile"];
+        if (!this.gameActive || global.gameManager.arenaClosed) {
+            return { ok: false, message: "Siege is not active in this arena." };
+        }
+        if (!preset || !Array.isArray(spawnTiles) || !spawnTiles.length) {
+            return { ok: false, message: "That special wave is unavailable here." };
+        }
+
+        global.gameManager.socketManager.broadcast(`Special wave ${preset.label} has started!`);
+        util.log(`Special Siege wave ${preset.label} has started!`);
+        for (const boss of preset.bosses) {
+            const spot = ran.choose(spawnTiles).randomInside();
+            const enemy = this.spawnEnemyWrapper(spot, boss, true);
+            enemy.define({ DANGER: 25 + enemy.SIZE / 5 });
+        }
+        return { ok: true, message: `Spawned special wave: ${preset.label}.` };
     }
 
     // runs once when the server starts

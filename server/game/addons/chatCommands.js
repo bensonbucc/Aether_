@@ -352,6 +352,27 @@ global.addChatCommand = function (command) {
     commands.push(command);
 }
 
+global.addChatCommand({
+    command: ["discordlink"],
+    description: "Link your Discord account to this browser using a one-time code.",
+    level: 0,
+    run: ({ socket, args }) => {
+        const linkedAccount = require("./discordLinkCodes.js").claim(args[0]);
+        if (!linkedAccount) {
+            socket.talk("m", 7_000, "That Discord link code is invalid, expired, or already used. Run /link again in Discord.");
+            return;
+        }
+
+        socket.discordLink = {
+            id: linkedAccount.discordId,
+            username: linkedAccount.username,
+            displayName: linkedAccount.displayName
+        };
+        socket.talk("DL", linkedAccount.token);
+        socket.talk("m", 7_000, `Discord linked: ${linkedAccount.displayName}. This browser will remember your account on this Aether site.`);
+    }
+});
+
 
 /** CHAT MESSAGE EVENT **/
 module.exports = ({ Events }) => {

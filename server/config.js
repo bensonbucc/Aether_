@@ -12,6 +12,7 @@ module.exports = {
     startup_logs: true, // Enable detailed startup logs and log speed loop warnings in the terminal
     load_all_mockups: false, // Set to true if you want every mockup to be loaded when the server starts. May noticeably slow down server startup.
     editor: true, // Enable the editor at '[host]/ext/editor'.
+    tank_editor: false, // Disabled: Tank Editor Beta has been removed from the playable server list.
 
     /* SERVER PROPERTIES INFORMATION - Make sure to change the host, port and id between servers!
 
@@ -55,7 +56,26 @@ module.exports = {
             private: false,
 
             properties: {
-
+                server_travel_properties: {
+                    loop_interval: 10000,
+                    portals: 2
+                },
+                server_travel: [
+                    {
+                        ip: 'localhost:3021',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'red'
+                        }
+                    },
+                    {
+                        ip: 'localhost:3031',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'blue'
+                        }
+                    }
+                ]
             }
         },
         {
@@ -95,7 +115,7 @@ module.exports = {
             private: false,
 
             properties: {
-                bot_cap: 20,
+                bot_cap: 5,
                 daily_tank: {
                     tank: 'whirlwind',
                     tier: 3,
@@ -151,7 +171,7 @@ module.exports = {
 
             properties: {
                 teams: 2,
-                bot_cap: 40,
+                bot_cap: 15,
                 server_travel_properties: {
                     loop_interval: 10_000, // how often the portal loop executes in seconds
                     portals: 1, // amount of portals to spawn
@@ -186,7 +206,7 @@ module.exports = {
             properties: {
                 mothership_time_limit: 30_000,
                 teams: 3,
-                bot_cap: 30
+                bot_cap: 15
             }
         },
         {
@@ -211,13 +231,35 @@ module.exports = {
         },
         {
             share_client_server: false,
+            host: 'localhost:3100',
+            port: 3100,
+            id: 'ls',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Normal Sandbox",
+            gamemode: ['normal_sandbox'],
+            player_cap: 80,
+
+            featured: false,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 1,
+                bot_cap: 0,
+                disable_auto_bots: true
+            }
+        },
+        {
+            share_client_server: false,
             host: 'localhost:3005',
             port: 3005,
             id: 'lg',
 
             region: "Local",
             serverhost: "Local",
-            location: "Growth",
+            location: "Growth Open",
             gamemode: ['growth'],
             player_cap: 80,
 
@@ -226,7 +268,7 @@ module.exports = {
             private: false,
 
             properties: {
-                bot_cap: 40
+                bot_cap: 15
             }
         },
         {
@@ -237,8 +279,8 @@ module.exports = {
 
             region: "Local",
             serverhost: "Local",
-            location: "Growth Maze 2TDM",
-            gamemode: ['tdm', 'growth', 'maze'],
+            location: "Growth 2TDM Maze",
+            gamemode: ['tdm', 'growth', 'open_maze'],
             player_cap: 80,
 
             featured: true,
@@ -246,30 +288,329 @@ module.exports = {
             private: false,
 
             properties: {
-                bot_cap: 40
+                teams: 2,
+                no_bases: true,
+                bot_cap: 15
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3024',
+            port: 3024,
+            id: 'ug',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Ultra Growth Space Maze",
+            gamemode: ['tdm', 'ultra_growth', 'open_maze', 'space'],
+            player_cap: 80,
+
+            featured: true,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 2,
+                bot_cap: 15
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3025',
+            port: 3025,
+            id: 'oval',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "The Oval Arena",
+            gamemode: ['the_oval_arena'],
+            player_cap: 80,
+
+            featured: true,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 0,
+                bot_cap: 15
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3026',
+            port: 3026,
+            id: 'ugs',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Ultra Growth Space",
+            gamemode: ['ultra_growth_space'],
+            player_cap: 80,
+
+            featured: true,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 0,
+                bot_cap: 15
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3023',
+            port: 3023,
+            id: 'gs',
+            region: "Local",
+            serverhost: "Local",
+            location: "Growth Squads Maze",
+            gamemode: ['squads', 'growth', 'maze'],
+            player_cap: 80,
+
+            featured: false,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 4,
+                bot_cap: 15
+            }
+        },
+        {
+            port: 3032,
+            id: 'rc',
+            region: "Local",
+            serverhost: "Local",
+            location: "Ricochet",
+            gamemode: ['ricochet'],
+            player_cap: 80,
+            featured: false,
+            unlisted: false,
+            private: false,
+            properties: {
+                teams: 0,
+                bot_cap: 50
             }
         },
 
         {
             share_client_server: false,
+            host: 'localhost:3019',
+            port: 3019,
+            id: 'gar',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Growth Arms Race Maze",
+            gamemode: ['ffa', 'growth', 'maze', 'arms_race'],
+            player_cap: 80,
+
+            featured: false,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 0,
+                bot_cap: 10
+            }
+        },
+
+        {
+            share_client_server: false,
+            host: 'localhost:3020',
+            port: 3020,
+            id: 'nx',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Nexus",
+            gamemode: ['nexus'],
+            player_cap: 80,
+
+            featured: false,
+            unlisted: false,
+            private: false,
+
+            properties: {
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3031',
+            port: 3031,
+            id: 'forge',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Forge",
+            gamemode: ['forge'],
+            player_cap: 80,
+
+            featured: false,
+            unlisted: true,
+            private: false,
+
+            properties: {
+                bot_cap: 0,
+                disable_auto_bots: true,
+                enable_bosses: false,
+                allow_server_travel: true,
+                dreadnought_forge: true,
+                old_dreadnought_unlock_score: 10_000_000,
+                server_travel_properties: {
+                    loop_interval: 30000,
+                    portals: 1
+                },
+                server_travel: [
+                    {
+                        ip: 'localhost:3022',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'blue',
+                            central_area_radius_tiles: 5
+                        }
+                    },
+                    {
+                        ip: 'localhost:3021',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'red',
+                            central_area_radius_tiles: 5
+                        }
+                    }
+                ]
+            }
+        },
+{
+            share_client_server: false,
+            host: 'localhost:3021',
+            port: 3021,
+            id: 'od',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Old Dreads",
+            gamemode: ['labyrinth'],
+            player_cap: 80,
+
+            featured: false,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 0,
+                bot_cap: 0,
+                disable_auto_bots: true,
+                enable_bosses: false,
+                allow_server_travel: true,
+                server_travel_properties: {
+                    loop_interval: 30000,
+                    portals: 1
+                },
+                server_travel: [
+                    {
+                        ip: 'localhost:3022',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'blue',
+                            central_area_radius_tiles: 5
+                        }
+                    },
+                    {
+                        ip: 'localhost:3031',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'red',
+                            central_area_radius_tiles: 5
+                        }
+                    }
+                ],
+                growth_wall_clearance_ratio: 0.32,
+                growth_size_score_cap: 1_500_000,
+                old_dreadnought_large_tank_speed_factor: 1.25,
+                growth_health_score_step: 250_000,
+                growth_health_score_bonus_per_step: 0.005,
+                growth_health_size_overflow_step: 0.5,
+                growth_health_score_bonus: 0.08,
+                growth_health_score_bonus_cap: 0.2,
+                old_dreadnought_unlock_score: 10_000_000,
+                classic_food_types: [
+                    [1, [[5, 'egg'], [10, 'triangle'], [15, 'square'], [45, 'pentagon'], [25, 'betaPentagon'], [10, 'alphaPentagon']]],
+                    [1/12, [[25, 'shinyTriangle'], [12, 'shinySquare'], [5, 'shinyPentagon']]],
+                    [1/70, [[12, 'legendaryTriangle'], [6, 'legendarySquare'], [2, 'legendaryPentagon']]],
+                    [1/250, [[3, 'shadowPentagon'], [2, 'rainbowPentagon'], [1, 'transPentagon']]],
+                    [1/600, [[5, 'cube'], [4, 'tetrahedron'], [3, 'octahedron'], [2, 'dodecahedron'], [1, 'icosahedron'], [1, 'tesseract']]]
+                ]
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3022',
+            port: 3022,
+            id: 'odopen',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "Open Old Dreads",
+            gamemode: ['open_old_dreads'],
+            player_cap: 80,
+
+            featured: false,
+            unlisted: true,
+            private: false,
+
+            properties: {
+                teams: 0,
+                bot_cap: 0,
+                disable_auto_bots: true,
+                enable_bosses: false,
+                allow_server_travel: true,
+                server_travel_properties: {
+                    loop_interval: 30000,
+                    portals: 1
+                },
+                server_travel: [
+                    {
+                        ip: 'localhost:3021',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'red',
+                            central_area_radius_tiles: 5
+                        }
+                    },
+                    {
+                        ip: 'localhost:3031',
+                        portal_properties: {
+                            spawn_chance: 1,
+                            color: 'purple',
+                            central_area_radius_tiles: 5
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            share_client_server: false,
             host: 'localhost:3007',
             port: 3007,
-            id: 'ob',
 
+            id: 'ob',
             region: "Local",
             serverhost: "Local",
             location: "Outbreak",
             gamemode: ['outbreak'],
             player_cap: 80,
 
-            featured: true,
+            featured: false,
             unlisted: false,
             private: false,
 
             properties: {
-                bot_cap: 40
+                teams: 2,
+                bot_cap: 15
             }
         },
+
         {
             share_client_server: false,
             host: 'localhost:3008',
@@ -287,7 +628,7 @@ module.exports = {
             private: false,
 
             properties: {
-                bot_cap: 40
+                bot_cap: 15
             }
         },
         {
@@ -298,7 +639,7 @@ module.exports = {
 
             region: "Local",
             serverhost: "Local",
-            location: "Halloween / Haunted Asylum",
+            location: "Haunted Asylum",
             gamemode: ['halloween'],
             player_cap: 80,
 
@@ -307,7 +648,28 @@ module.exports = {
             private: false,
 
             properties: {
-                bot_cap: 40
+                bot_cap: 15
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3035',
+            port: 3035,
+            id: 'mm',
+
+            region: "Local",
+            serverhost: "Local",
+            location: "2 Team Mothership Maze",
+            gamemode: ['mothership', 'maze'],
+            player_cap: 80,
+
+            featured: true,
+            unlisted: false,
+            private: false,
+
+            properties: {
+                teams: 2,
+                bot_cap: 15
             }
         },
         {
@@ -327,19 +689,40 @@ module.exports = {
             private: false,
 
             properties: {
-                bot_cap: 40
+                bot_cap: 15
+            }
+        },
+
+        {
+            share_client_server: false,
+            host: 'localhost',
+            port: 3011,
+            id: 'g4',
+            region: "Local",
+            serverhost: "Local",
+            location: "Growth 4TDM No Bases",
+            gamemode: ['tdm', 'growth'],
+            player_cap: 80,
+            featured: true,
+            unlisted: false,
+            private: false,
+            properties: {
+                teams: 4,
+                no_bases: true,
+                disable_base_check: true,
+                bot_cap: 15
             }
         },
         {
             share_client_server: false,
-            host: 'localhost:3020',
-            port: 3020,
-            id: 'tw',
+            host: 'localhost:3030',
+            port: 3030,
+            id: 'sgb',
 
             region: "Local",
             serverhost: "Local",
-            location: "Train Wars",
-            gamemode: ['train_wars'],
+            location: "Siege Growth Blitz",
+            gamemode: ['siege_blitz', 'growth'],
             player_cap: 80,
 
             featured: true,
@@ -347,8 +730,62 @@ module.exports = {
             private: false,
 
             properties: {
-                bot_cap: 40
+                bot_cap: 15,
+                disable_auto_bots: true
             }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3012',
+            port: 3012,
+            id: 'aa',
+            region: "Local",
+            serverhost: "Local",
+            location: "Assault",
+            gamemode: ['assault_acropolis'],
+            player_cap: 80,
+            featured: true,
+            unlisted: false,
+            private: false,
+            properties: {
+                bot_cap: 15,
+                assault_rotation: [
+                    "assault_acropolis", "assault_booster", "assault_bunker",
+                    "assault_eye", "assault_line", "assault_trenches", "assault_yinyang"
+                ]
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3033',
+            port: 3033,
+            id: 'legion',
+            region: "Local",
+            serverhost: "Local",
+            location: "Legion",
+            gamemode: ['legion'],
+            player_cap: 80,
+            featured: true,
+            unlisted: false,
+            private: false,
+            properties: {
+                bot_cap: 15
+            }
+        },
+        {
+            share_client_server: false,
+            host: 'localhost:3034',
+            port: 3034,
+            id: 'az',
+            region: "Local",
+            serverhost: "Local",
+            location: "Aether Zones",
+            gamemode: ['aether_zones'],
+            player_cap: 80,
+            featured: true,
+            unlisted: false,
+            private: false,
+            properties: {}
         },
     ],
     // Web Server
@@ -405,7 +842,7 @@ module.exports = {
     tier_multiplier: 15, // Level difference between each upgrade tier.
 
     // Bots
-    bot_cap: 20, // Maximum number of bots that can be on the server. Set to 0 to disable bots.
+    bot_cap: 5, // Maximum number of bots that can be on the server. Set to 0 to disable bots.
     bot_xp_gain: 60, // How much XP bots get until they reach level_cap.
     bot_start_level: 45, // How much XP bots will receive when first created.
     bot_skill_upgrade_chances: [1, 1, 3, 4, 4, 4, 4, 2, 1, 1], // The chances of a bot upgrading a specific skill when skill upgrades are available.
@@ -470,16 +907,23 @@ module.exports = {
     ]),
 
     // Classic Food
+    old_dreadnoughts: false,
     classic_food: false, // Enables classic (Old Dreadnoughts) food types.
-    classic_food_types: [ // Possible classic food types outside the nest
+    classic_food_types: [
         [1, [
-            [65, 'egg'], [64, 'triangle'], [45, 'square'], [7, 'pentagon']//, [1, 'hexagon']
+            [5, 'egg'], [10, 'triangle'], [15, 'square'], [45, 'pentagon'], [25, 'betaPentagon'], [10, 'alphaPentagon']
         ]],
-        [1/50000, [
-            [625, 'gem'], [125, 'shinyTriangle'], [25, 'shinySquare'], [5, 'shinyPentagon']//, [1, 'shinyHexagon']
+        [1/15, [
+            [25, 'shinyTriangle'], [12, 'shinySquare'], [5, 'shinyPentagon']
         ]],
-        [1/1000000, [
-            [1296, 'jewel'], [216, 'legendaryTriangle'], [36, 'legendarySquare'], [6, 'legendaryPentagon']//, [1, 'legendaryHexagon']
+        [1/100, [
+            [12, 'legendaryTriangle'], [6, 'legendarySquare'], [2, 'legendaryPentagon']
+        ]],
+        [1/500, [
+            [3, 'shadowPentagon'], [2, 'rainbowPentagon'], [1, 'transPentagon']
+        ]],
+        [1/1500, [
+            [1, 'cube'], [1, 'dodecahedron'], [1, 'icosahedron']
         ]]
     ],
     classic_food_types_nest: [ // Possible classic food types in the nest
@@ -542,6 +986,48 @@ module.exports = {
     round_arena: false,
     mode: 'ffa',
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

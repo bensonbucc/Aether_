@@ -6,6 +6,7 @@ const g = require('../../gunvals.js')
 Class.developer = {
     PARENT: 'genericTank',
     LABEL: "Developer",
+    CONTROLLERS: [],
     BODY: {
         SHIELD: 1000,
         REGEN: 10,
@@ -54,6 +55,7 @@ Class.developer = {
         'spectator',
         'menu_addons',
         'menu_testing',
+        'wrench',
         'eggGen',
     ]
 }
@@ -282,3 +284,6 @@ Class.menu_fun = makeMenu("Fun", {upgrades: [
 ], tooltip: "Tanks that, let's be honest, aren't used for a good reason.\n" + "DISCLAIMER: Some of the content in here may be in poor taste. Blame the arras.io devs, not us."})
 Class.menu_bosses = makeMenu("Bosses", {upgrades: ["sentries", "elites", "mysticals", "nesters", "rogues", "rammers", "terrestrials", "celestials", "eternals", "devBosses"].map(x => "menu_" + x), rerootTree: "menu_bosses"})
 Class.menu_addons = makeMenu("Addons", {tooltip: "Content that is (usually) not part of Open Source Arras but was added by someone else."})
+
+
+

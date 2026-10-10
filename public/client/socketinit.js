@@ -1,4 +1,4 @@
-import { global } from "./global.js";
+﻿import { global } from "./global.js";
 import { util } from "./util.js";
 import { config } from "./config.js";
 import { protocol } from "./protocol.js";
@@ -81,6 +81,7 @@ gui = {
     accel: 0,
     topspeed: 1,
 };
+window.__AETHER_GUI__ = gui;
 let xx = 0,
     yy = 0,
     _vx = 0,
@@ -825,6 +826,14 @@ let incoming = async function(message, socket) {
     }
     // Decide how to interpret it
     switch (m.shift()) {
+        case "DL": {
+            try {
+                localStorage.setItem("aetherDiscordLinkToken", String(m[0] || ""));
+            } catch {}
+        } break;
+        case "DLR": {
+            try { localStorage.removeItem("aetherDiscordLinkToken"); } catch {}
+        } break;
         case 'W': {
             if (m[0]) {
                 global.message = '';
@@ -857,6 +866,11 @@ let incoming = async function(message, socket) {
                 let blackoutData = JSON.parse(m[5]);
                 global.advanced.blackout.active = blackoutData.active;
                 global.advanced.blackout.color = blackoutData.color;
+                global.advanced.hauntedAsylum = {
+                    active: blackoutData.hauntedAsylum === true,
+                    westDark: blackoutData.hauntedWestDark === true,
+                    eastDark: blackoutData.hauntedEastDark === true
+                };
                 global.advanced.roundArena = m[6];
                 // Start syncing
                 socket.talk('S', getNow());
@@ -880,6 +894,13 @@ let incoming = async function(message, socket) {
                 global.serverStats.mspt = m[1];
                 if (global.showDebug) console.log(`mspt: ${global.serverStats.mspt} total entities on screen: ${global.entities.length} Player X: ${(global.player.renderx).toFixed(1)} Player Y: ${(global.player.rendery).toFixed(1)}`);
             } break;
+        case "AZ": {
+            try {
+                window.__aetherZones = JSON.parse(m[0]);
+            } catch (error) {
+                console.warn("Could not read Aether Zones map update.", error);
+            }
+        } break;
             case "gSvInfo": {
                 global.serverStats.players = m[1];
             } break;
@@ -941,6 +962,49 @@ let incoming = async function(message, socket) {
             } break;
         case 'm': { // message
             global.createMessage(m[1], m[0]);
+        } break;
+        case "TE": {
+            try {
+                window.dispatchEvent(new CustomEvent("aether-tank-editor-data", {
+                    detail: JSON.parse(m[0]),
+                }));
+            } catch (error) {
+                console.error("Could not read Tank Editor response.", error);
+            }
+        } break;
+        case "SW": {
+            window.dispatchEvent(new CustomEvent("aether-dev-siege-response", {
+                detail: { status: m[0], message: m[1] },
+            }));
+        } break;
+        case "DS": {
+            window.dispatchEvent(new CustomEvent("aether-dev-shape-response", {
+                detail: { status: m[0], message: m[1] },
+            }));
+        } break;
+        case "DT": {
+            window.dispatchEvent(new CustomEvent("aether-dev-tank-response", {
+                detail: { status: m[0], message: m[1] },
+            }));
+        } break;
+        case "DC": {
+            window.dispatchEvent(new CustomEvent("aether-dev-duplicate-response", {
+                detail: { status: m[0], message: m[1] },
+            }));
+        } break;
+        case "DA": {
+            try {
+                window.dispatchEvent(new CustomEvent("aether-dev-ai-response", { detail: JSON.parse(m[0]) }));
+            } catch (error) {
+                console.warn("Could not read Dev Panel response.", error);
+            }
+        } break;
+        case "HA": {
+            global.advanced.hauntedAsylum = {
+                active: true,
+                westDark: m[0] === true,
+                eastDark: m[1] === true,
+            };
         } break;
         case "Em": {
             global.createMessage(m[1], m[0], true);
@@ -1016,7 +1080,7 @@ let incoming = async function(message, socket) {
                 global.player.animX.add(m[1]);
                 global.player.animY.add(m[2]);
                 // Fov stuff
-                global.player.view = camfov;
+                global.player.view = global.mobile ? camfov * 1.25 : camfov;
                 global.player.animv.add(global.player.view);
                 if (isNaN(global.player.renderv) || global.player.renderv === 0) {
                     global.player.renderv = defaultFov;
@@ -1201,7 +1265,7 @@ let incoming = async function(message, socket) {
 
             // Setup
             global.gameLoading = true;
-            global.serverAdd = m[0];
+            if (location.protocol !== "https:") global.serverAdd = m[0];
             global.bodyID = m[1];
             if (global.serverMap[global.serverAdd]) global.serverMap[global.serverAdd].onclick();
 
@@ -1274,6 +1338,7 @@ const socketInit = () => {
     window.resizeEvent();
     let wsAddress = location.protocol === "https:" ? "wss://" + location.host + "/?server=" + encodeURIComponent(location.hash.slice(1)) : "ws://" + global.serverAdd + "?server=" + encodeURIComponent(location.hash.slice(1));
     let socket = new WebSocket(wsAddress);
+    window.__AETHER_STACKER_ENABLED__ = window.__AETHER_STACKER_ENABLED__ || false;
     // Set up our socket
     socket.binaryType = 'arraybuffer';
     socket.open = false;
@@ -1289,6 +1354,37 @@ const socketInit = () => {
         false, // rmb
         false,
     ];
+    const septaStackerRequests = { trapper: false, mech: false };
+    let generalStackerRequested = false;
+    let stackerActive = false;
+    let septaStackerSpinActive = false;
+    let septaStackerOwnsSpin = false;
+    const updateSeptaStacker = () => {
+        const tankClass = String(gui.class || "").toLowerCase().replace(/[^a-z]/g, "");
+        const septaActive =
+            (tankClass === "septatrapper" && septaStackerRequests.trapper) ||
+            (tankClass === "septamech" && septaStackerRequests.mech);
+        const active = septaActive || generalStackerRequested;
+        const enableClientSpin = septaActive || generalStackerRequested;
+
+        if (enableClientSpin && !septaStackerSpinActive) {
+            septaStackerOwnsSpin = !global.autoSpin;
+            if (septaStackerOwnsSpin) {
+                global.autoSpin = true;
+                socket.talk("t", 0, true);
+            }
+        } else if (!enableClientSpin && septaStackerSpinActive) {
+            if (septaStackerOwnsSpin) {
+                global.autoSpin = false;
+                socket.talk("t", 0, true);
+            }
+            septaStackerOwnsSpin = false;
+        }
+        septaStackerSpinActive = enableClientSpin;
+        if (active === stackerActive) return;
+        stackerActive = active;
+        flag = true;
+    };
     socket.cmd = {
         set: (index, value) => {
             if (commands[index] !== value) {
@@ -1296,16 +1392,201 @@ const socketInit = () => {
                 flag = true;
             }
         },
+        setSeptaTrapperStacker: active => {
+            const tankClass = String(gui.class || "").toLowerCase().replace(/[^a-z]/g, "");
+            septaStackerRequests.trapper = Boolean(active) && tankClass === "septatrapper";
+            updateSeptaStacker();
+        },
+        setSeptaMechStacker: active => {
+            const tankClass = String(gui.class || "").toLowerCase().replace(/[^a-z]/g, "");
+            septaStackerRequests.mech = Boolean(active) && tankClass === "septamech";
+            updateSeptaStacker();
+        },
+        setGeneralStacker: active => {
+            generalStackerRequested = Boolean(active);
+            updateSeptaStacker();
+        },
+        // Backward compatibility with the original Septa-Trapper userscript.
+        setSeptaStacker: active => socket.cmd.setSeptaTrapperStacker(active),
         talk: () => {
             flag = false;
+
             let o = 0;
+
+            // Normal movement controls.
             for (let i = 0; i < 8; i++) {
-                if (commands[i]) o += Math.pow(2, i);
+                if (i !== 4 && commands[i]) {
+                    o |= Math.pow(2, i);
+                }
             }
-            let ratio = util.getRatio();
-            socket.talk('C', Math.round(global.target.x / ratio), Math.round(global.target.y / ratio), global.reverseTank, o);
+            if (stackerActive) o |= 128;
+
+            let aimX = global.target.x;
+            let aimY = global.target.y;
+
+            const stacking =
+                window.__AETHER_STACKER_ENABLED__ &&
+                commands[4] &&
+                String(gui.class || "").toLowerCase() === "cyclone";
+
+            if (stacking) {
+                /*
+                 * CYCLONE STACKER V2
+                 *
+                 * Keep the original successful pulse timing:
+                 *
+                 * 0°  -> 60° -> 30° -> 90°
+                 * 50ms each
+                 * 100ms rest
+                 *
+                 * The mouse direction is captured once per cycle.
+                 * This prevents the four shots from fighting against
+                 * mouse movement and keeps the stack together.
+                 */
+
+                const FIRE_MS = 50;
+                const OFF_MS = 100;
+                const CYCLE_MS = 300;
+
+                const now = performance.now();
+
+                const elapsed =
+                    now -
+                    (window.__AETHER_STACKER_START__ || now);
+
+                const phase =
+                    ((elapsed % CYCLE_MS) + CYCLE_MS) % CYCLE_MS;
+
+                /*
+                 * Detect the beginning of a new stack cycle.
+                 */
+                const cycle =
+                    Math.floor(elapsed / CYCLE_MS);
+
+                if (window.__AETHER_STACKER_CYCLE__ !== cycle) {
+                    window.__AETHER_STACKER_CYCLE__ = cycle;
+
+                    /*
+                     * Capture the mouse direction for THIS entire
+                     * four-shot stack.
+                     */
+                    let mx = global.target.x;
+                    let my = global.target.y;
+
+                    if (
+                        global.player &&
+                        global.canvas &&
+                        global.mouse
+                    ) {
+                        mx =
+                            global.mouse.x -
+                            (
+                                global.player.screenx /
+                                global.screenWidth *
+                                global.canvas.width +
+                                global.canvas.width / 2
+                            );
+
+                        my =
+                            global.mouse.y -
+                            (
+                                global.player.screeny /
+                                global.screenHeight *
+                                global.canvas.height +
+                                global.canvas.height / 2
+                            );
+
+                        mx *=
+                            global.screenWidth /
+                            global.canvas.width;
+
+                        my *=
+                            global.screenHeight /
+                            global.canvas.height;
+                    }
+
+                    const mouseDistance =
+                        Math.hypot(mx, my);
+
+                    if (mouseDistance > 0) {
+                        window.__AETHER_STACKER_ANGLE__ =
+                            Math.atan2(my, mx);
+
+                        window.__AETHER_STACKER_DISTANCE__ =
+                            mouseDistance;
+                    }
+                }
+
+                const baseAngle =
+                    window.__AETHER_STACKER_ANGLE__;
+
+                const distance =
+                    window.__AETHER_STACKER_DISTANCE__;
+
+                if (
+                    Number.isFinite(baseAngle) &&
+                    Number.isFinite(distance) &&
+                    phase < 200
+                ) {
+                    /*
+                     * Preserve the exact counter-clockwise order
+                     * that produced the good stack.
+                     */
+                    const groups = [0, 2, 1, 3];
+
+                    const index =
+                        Math.min(
+                            3,
+                            Math.floor(phase / FIRE_MS)
+                        );
+
+                    const offset =
+                        groups[index] *
+                        (Math.PI / 6);
+
+                    /*
+                     * Subtracting the offset preserves the
+                     * counter-clockwise stacking direction.
+                     */
+                    const shotAngle =
+                        baseAngle - offset;
+
+                    aimX =
+                        distance *
+                        Math.cos(shotAngle);
+
+                    aimY =
+                        distance *
+                        Math.sin(shotAngle);
+
+                    o |= Math.pow(2, 4);
+                }
+            } else {
+                /*
+                 * Reset cycle state when leaving Cyclone stacking.
+                 */
+                window.__AETHER_STACKER_CYCLE__ = undefined;
+
+                if (commands[4]) {
+                    o |= Math.pow(2, 4);
+                }
+            }
+
+            const ratio = util.getRatio();
+
+            socket.talk(
+                'C',
+                Math.round(aimX / ratio),
+                Math.round(aimY / ratio),
+                global.reverseTank,
+                o
+            );
         },
-        check: () => flag,
+        check: () => flag || stackerActive || (
+            window.__AETHER_STACKER_ENABLED__ &&
+            commands[4] &&
+            String(gui.class || "").toLowerCase() === "cyclone"
+        ),
         getMotion: () => ({
             x: commands[3] - commands[2],
             y: commands[1] - commands[0],
@@ -1325,31 +1606,61 @@ const socketInit = () => {
         global.bandwidth.currentHa += message.byteLength;
     };
    
- window.__ARRAS_SOCKET__ = socket;
+ window.__ARRAS_SOCKET__ = socket; document.dispatchEvent(new CustomEvent('AETHER_SOCKET_READY'));
 // Websocket functions for when stuff happens
     // This is for when the socket first opens
     socket.onopen = function socketOpen() {
         socket.open = true;
         // define a pinging function
         socket.ping = payload => socket.talk('p', payload);
+        try {
+            const discordLinkToken = localStorage.getItem("aetherDiscordLinkToken");
+            if (discordLinkToken) socket.talk("DL", discordLinkToken);
+        } catch {}
     };
 
     // Handle incoming messages
-    socket.onmessage = (msg) => incoming(msg, socket);
+    const connectionTimeout = setTimeout(() => {
+        if (!global.gameConnecting || global.gameStart) return;
+        global.gameConnecting = false;
+        global.exit();
+        global.message = 'The selected game mode did not respond. Check that its server is running, then try again.';
+        alert(global.message);
+    }, 15000);
+    socket.onmessage = (msg) => {
+        clearTimeout(connectionTimeout);
+        incoming(msg, socket);
+    };
 
     // Handle closing
     socket.onclose = () => {
+        clearTimeout(connectionTimeout);
         if (!global.gameLoading) return;
         clearInterval(socket.commandCycle);
         clearInterval(global.socketMotionCycle);
         if (global.dailyTankAd.render) global.dailyTankAd.exit();
         socket.open = false;
+        if (global.gameConnecting && !global.gameStart) {
+            global.gameConnecting = false;
+            global.exit();
+            global.message = 'The selected game mode closed the connection before joining. Check that its server is running, then try again.';
+            alert(global.message);
+            return;
+        }
         global.disconnected = true;
     };
     // Notify about errors
     socket.onerror = error => {
+        clearTimeout(connectionTimeout);
         clearInterval(socket.commandCycle);
         clearInterval(global.socketMotionCycle);
+        if (global.gameConnecting && !global.gameStart) {
+            global.gameConnecting = false;
+            global.exit();
+            global.message = 'Could not connect to the selected game mode. Check that its server is running, then try again.';
+            alert(global.message);
+            return;
+        }
         global.message = 'Socket error. Maybe another server will work.';
     };
     // Gift it to the rest of the world
@@ -1408,6 +1719,3 @@ global.reconnectSocket = () => {
 }
 
 export { socketInit, resync, gui, leaderboard, minimap, moveCompensation, lag, getNow, clockDiff, serverStart }
-
-
-

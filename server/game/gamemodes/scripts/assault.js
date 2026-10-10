@@ -22,15 +22,47 @@ class Assault {
         }
         o.on("dead", () => {
             if (!this.gameActive || global.gameManager.arenaClosed) return;
+
+            // Remove this tile from the team that just lost the Dominator.
+            if (this.room.spawnable[o.team]) {
+                util.remove(
+                    this.room.spawnable[o.team],
+                    this.room.spawnable[o.team].indexOf(tile)
+                );
+            }
+
             if (o.team === TEAM_BLUE) {
                 this.spawnDominator(tile, TEAM_GREEN, tile.isSanctuary ? "sanctuaryTier3" : originalType, originalType);
                 tile.color = "green";
+
+                // The repaired Green Dominator is now a valid Green spawn.
+                if (!this.room.spawnable[TEAM_GREEN]) {
+                    this.room.spawnable[TEAM_GREEN] = [];
+                }
+                if (this.room.spawnable[TEAM_GREEN].indexOf(tile) === -1) {
+                    this.room.spawnable[TEAM_GREEN].push(tile);
+                }
+
                 this.leftDominators++;
                 global.gameManager.socketManager.broadcast(`A GREEN ${tile.isSanctuary ? "Sanctuary" : "Dominator"} has been repaired!`);
                 if (this.leftDominators == 3 && this.timerPaused) this.timerPaused = false;
             } else {
                 this.spawnDominator(tile, TEAM_BLUE, "dominator", originalType);
                 tile.color = "blue";
+                if (this.room.spawnable[TEAM_GREEN]) {
+                    util.remove(
+                        this.room.spawnable[TEAM_GREEN],
+                        this.room.spawnable[TEAM_GREEN].indexOf(tile)
+                    );
+                }
+
+                // The repaired Blue Dominator is now a valid Blue spawn.
+                if (!this.room.spawnable[TEAM_BLUE]) {
+                    this.room.spawnable[TEAM_BLUE] = [];
+                }
+                if (this.room.spawnable[TEAM_BLUE].indexOf(tile) === -1) {
+                    this.room.spawnable[TEAM_BLUE].push(tile);
+                }
                 this.leftDominators--;
                 global.gameManager.socketManager.broadcast(`A GREEN ${tile.isSanctuary ? "Sanctuary" : "Dominator"} has been destroyed!`);
                 if (this.leftDominators == 2) {

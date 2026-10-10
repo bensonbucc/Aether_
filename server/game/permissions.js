@@ -15,6 +15,14 @@ module.exports = [
         note: "note here"
     },
     {
+        key: process.env.TANK_EDITOR_BETA_PASSWORD || "hurtsdabest",
+        level: 1,
+        class: "arrasMenu_betaTester",
+        tankEditor: true,
+        nameColor: "#ffffff",
+        note: "Tank Editor Beta Tester"
+    },
+    {
         key: process.env.SHINY,
         level: 2,
         class: "arrasMenu_shinyMember",

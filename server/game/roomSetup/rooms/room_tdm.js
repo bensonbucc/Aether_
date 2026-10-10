@@ -1,4 +1,4 @@
-let teams = require('../../gamemodes/config/tdm.js').teams,
+﻿let teams = require('../../gamemodes/config/tdm.js').teams,
 	room = Array(Config.roomHeight).fill(() => Array(Config.roomWidth).fill()).map(x => x()),
 	spacing = 0,
 locations = [
@@ -57,7 +57,11 @@ locations = [
 	]
 ];
 
-if (teams === 2 && !spacing) {
+if (Config.no_bases) {
+        // No-bases mode: leave the room completely open.
+        // Players still belong to their normal teams, but there are
+        // no team base tiles or protected base tiles.
+} else if (teams === 2 && !spacing) {
 	let baseprotGap = Math.ceil((Config.roomHeight - 1) / 6);
 	for (let y = 0; y < Config.roomHeight; y++) {
 		room[y][0] = tileClass.base1;
@@ -77,3 +81,4 @@ if (teams === 2 && !spacing) {
 }
 
 module.exports = room;
+

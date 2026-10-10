@@ -1,4 +1,4 @@
-module.exports = {
+﻿module.exports = {
     // Base Values
     blank: {
         reload: 1,
@@ -24,11 +24,13 @@ module.exports = {
         spray: 15
     },
     drone: {
-        reload: 36,
+        reload: 36 * 1.05,
         recoil: 0.25,
         shudder: 0.1,
         size: 0.6,
         speed: 1.5,
+        health: 0.9,
+        damage: 0.72,
         spray: 0.1
     },
     swarm: {
@@ -41,10 +43,11 @@ module.exports = {
         spray: 5
     },
     minion: {
-        reload: 48,
+        reload: 48 * 1.05,
         shudder: 0.1,
         size: 0.7,
-        damage: 0.75,
+        health: 0.9,
+        damage: 0.75 * 0.72,
         speed: 3,
         spray: 0.1
     },
@@ -517,7 +520,7 @@ module.exports = {
         recoil: 0,
         shudder: 2,
         health: 0.4,
-        damage: 0.4,
+        damage: 0.3,
         pen: 1.2,
         range: 0.75,
         spray: 2
@@ -544,8 +547,8 @@ module.exports = {
 
     // Minions
     spawner: {
-        reload: 1.5,
-        maxSpeed: 1.25
+        reload: 1.65,
+        maxSpeed: 1.1
     },
 
     // Heavy cannons
@@ -563,9 +566,9 @@ module.exports = {
         recoil: 1.8,
         shudder: 0.5,
         health: 2,
-        damage: 0.9,
+        damage: 1.08,
         pen: 1.2,
-        speed: 0.5,
+        speed: 0.545,
         maxSpeed: 0.6,
         density: 2,
         resist: 3
@@ -864,3 +867,5 @@ module.exports = {
         spray: 19
     },
 };
+
+

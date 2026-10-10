@@ -46,6 +46,17 @@ class definitionCombiner {
             Class[key].index = i;
             classMap.set(i++, key);
         }
+
+        // Approved Tank Editor definitions become ordinary Arms Race upgrade
+        // classes only after the gamemode definitions and their indexes exist.
+        if (Config.arms_race || Config.arms_race_only) {
+            try {
+                const approved = require("../../game/addons/tankEditorStorage.js").registerApprovedArmsRaceTanks();
+                if (approved.length) console.log(`[Tank Editor] Loaded ${approved.length} approved design(s) into Arms Race.`);
+            } catch (error) {
+                console.error("[Tank Editor] Could not load approved Arms Race designs:", error.message);
+            }
+        }
     }
 
     calculateGroupsLength(directory) {

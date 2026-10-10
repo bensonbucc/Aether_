@@ -1,4 +1,4 @@
-const {combineStats, skillSet} = require('../facilitators.js')
+﻿const {combineStats, skillSet} = require('../facilitators.js')
 const {base, dfltskl, smshskl, statnames} = require('../constants.js')
 const g = require('../gunvals.js')
 
@@ -611,3 +611,8 @@ Class.tagMode = {
     SHAPE: "",
     LABEL: "Players"
 }
+
+
+
+
+
